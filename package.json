@@ -3,9 +3,10 @@
   "name": "tab-triage",
   "description": "Full-page tab manager for Firefox with sorting, filtering, grouping, and search.",
   "scripts": {
+    "zip": "zip -r -FS tab-triage.zip manifest.json background.js triage.html triage.js triage.css icons/ -x '*.DS_Store'",
     "lint": "zip -r -FS /tmp/tab-triage-lint.zip manifest.json background.js triage.html triage.js triage.css icons/ -x '*.DS_Store' && addons-linter /tmp/tab-triage-lint.zip --boring --warnings-as-errors; EXIT=$?; rm -f /tmp/tab-triage-lint.zip; exit $EXIT"
   },
   "devDependencies": {
-    "addons-linter": "^7"
+    "addons-linter": "^10.3.0"
   }
 }
