@@ -32,11 +32,16 @@ All state is module-level variables in `triage.js`: `allTabs`, `enrichedTabs`, `
 - **Vanilla JavaScript** — no frameworks, no dependencies, no build step
 - **Firefox WebExtension API** (Manifest V2) — `browser.*` namespace only, not Chrome-compatible
 - **Plain CSS** with CSS custom properties
-- **No package.json, no bundler, no transpiler, no tests**
+- **No bundler, no transpiler** — source files are the distribution
+- **addons-linter** — Mozilla's extension validator, run via `npm run lint`
 
 ## Build & Packaging
 
 Source files are the distribution files directly. Package with `web-ext build` or zip manually. The `.gitignore` excludes `*.xpi`, `*.zip`, and `web-ext-artifacts/`.
+
+## Linting
+
+Run `npm run lint` to validate the extension with Mozilla's [addons-linter](https://github.com/mozilla/addons-linter). This zips only extension source files and lints the zip (to avoid scanning `.git/` and `node_modules/`). Warnings are treated as errors (`--warnings-as-errors`). CI runs this on every push and PR via GitHub Actions (`.github/workflows/lint.yml`).
 
 ## Key Conventions
 
