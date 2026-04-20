@@ -275,11 +275,14 @@ function render() {
       // Group header
       const headerRow = document.createElement("tr");
       headerRow.className = "group-header";
-      headerRow.innerHTML = `<td colspan="9">
-        ${collapsedGroups.has(groupName) ? "\u25B6" : "\u25BC"}
-        ${escapeHtml(groupName)}
-        <span class="group-count">(${tabs.length} tabs)</span>
-      </td>`;
+      const headerTd = document.createElement("td");
+      headerTd.colSpan = 9;
+      headerTd.textContent = (collapsedGroups.has(groupName) ? "\u25B6" : "\u25BC") + " " + groupName + " ";
+      const groupCountSpan = document.createElement("span");
+      groupCountSpan.className = "group-count";
+      groupCountSpan.textContent = `(${tabs.length} tabs)`;
+      headerTd.appendChild(groupCountSpan);
+      headerRow.appendChild(headerTd);
       headerRow.addEventListener("click", () => {
         if (collapsedGroups.has(groupName)) {
           collapsedGroups.delete(groupName);
@@ -313,45 +316,135 @@ function createTabRow(tab) {
   const countClass = tab.domainCount >= 20 ? "high"
     : tab.domainCount >= 5 ? "medium" : "low";
 
-  const badges = tab.statusList
-    .map((s) => `<span class="badge badge-${s}">${s}</span>`)
-    .join("");
-  const dupBadge = tab.isDuplicate
-    ? `<span class="badge badge-duplicate">dup \u00D7${tab.duplicateCount}</span>`
-    : "";
+  tr.appendChild(createTd("col-index", tab.index));
 
-  tr.innerHTML = `
-    <td class="col-index">${tab.index}</td>
-    <td class="col-title">
-      <div class="tab-title">
-        ${tab.favIconUrl ? `<img class="tab-favicon" src="${escapeHtml(tab.favIconUrl)}" onerror="this.style.display='none'">` : ""}
-        <div>
-          <div class="tab-title-text" title="${escapeHtml(tab.title || "")}">${escapeHtml(tab.title || "(untitled)")}</div>
-          <span class="tab-url" title="${escapeHtml(tab.url || "")}">${escapeHtml(tab.url || "")}</span>
-        </div>
-      </div>
-    </td>
-    <td class="col-domain"><span class="tab-domain">${escapeHtml(tab.domain)}</span></td>
-    <td class="col-count"><span class="domain-count ${countClass}">${tab.domainCount}</span></td>
-    <td class="col-accessed">${formatDate(tab.lastAccessed)}</td>
-    <td class="col-age"><span class="age-text ${ageClass}">${tab.ageText}</span></td>
-    <td class="col-window">${tab.windowId}</td>
-    <td class="col-status"><div class="status-badges">${badges}${dupBadge}</div></td>
-    <td class="col-actions">
-      <div class="action-buttons">
-        <button class="btn-goto" data-tab-id="${tab.id}" data-window-id="${tab.windowId}" title="Switch to tab">Go</button>
-        ${tab.isDuplicate ? `<button class="btn-dedup" data-tab-id="${tab.id}" title="Close other duplicates, keep this one">Dedup</button>` : ""}
-        <div class="ignore-dropdown">
-          <button class="btn-ignore" title="Ignore this tab">Ignore \u25BC</button>
-          <div class="ignore-menu">
-            <button class="btn-ignore-url">Ignore URL</button>
-            <button class="btn-ignore-domain">Ignore ${escapeHtml(tab.domain)}</button>
-          </div>
-        </div>
-        <button class="btn-close" data-tab-id="${tab.id}" title="Close tab">\u2715</button>
-      </div>
-    </td>
-  `;
+  // Title cell
+  const titleTd = document.createElement("td");
+  titleTd.className = "col-title";
+  const titleDiv = document.createElement("div");
+  titleDiv.className = "tab-title";
+  if (tab.favIconUrl) {
+    const img = document.createElement("img");
+    img.className = "tab-favicon";
+    img.src = tab.favIconUrl;
+    img.onerror = function () { this.style.display = "none"; };
+    titleDiv.appendChild(img);
+  }
+  const titleInner = document.createElement("div");
+  const titleText = document.createElement("div");
+  titleText.className = "tab-title-text";
+  titleText.title = tab.title || "";
+  titleText.textContent = tab.title || "(untitled)";
+  titleInner.appendChild(titleText);
+  const urlSpan = document.createElement("span");
+  urlSpan.className = "tab-url";
+  urlSpan.title = tab.url || "";
+  urlSpan.textContent = tab.url || "";
+  titleInner.appendChild(urlSpan);
+  titleDiv.appendChild(titleInner);
+  titleTd.appendChild(titleDiv);
+  tr.appendChild(titleTd);
+
+  // Domain cell
+  const domainTd = document.createElement("td");
+  domainTd.className = "col-domain";
+  const domainSpan = document.createElement("span");
+  domainSpan.className = "tab-domain";
+  domainSpan.textContent = tab.domain;
+  domainTd.appendChild(domainSpan);
+  tr.appendChild(domainTd);
+
+  // Count cell
+  const countTd = document.createElement("td");
+  countTd.className = "col-count";
+  const countSpan = document.createElement("span");
+  countSpan.className = "domain-count " + countClass;
+  countSpan.textContent = tab.domainCount;
+  countTd.appendChild(countSpan);
+  tr.appendChild(countTd);
+
+  // Accessed cell
+  tr.appendChild(createTd("col-accessed", formatDate(tab.lastAccessed)));
+
+  // Age cell
+  const ageTd = document.createElement("td");
+  ageTd.className = "col-age";
+  const ageSpan = document.createElement("span");
+  ageSpan.className = "age-text " + ageClass;
+  ageSpan.textContent = tab.ageText;
+  ageTd.appendChild(ageSpan);
+  tr.appendChild(ageTd);
+
+  // Window cell
+  tr.appendChild(createTd("col-window", tab.windowId));
+
+  // Status cell
+  const statusTd = document.createElement("td");
+  statusTd.className = "col-status";
+  const badgesDiv = document.createElement("div");
+  badgesDiv.className = "status-badges";
+  for (const s of tab.statusList) {
+    const badge = document.createElement("span");
+    badge.className = "badge badge-" + s;
+    badge.textContent = s;
+    badgesDiv.appendChild(badge);
+  }
+  if (tab.isDuplicate) {
+    const dupBadge = document.createElement("span");
+    dupBadge.className = "badge badge-duplicate";
+    dupBadge.textContent = "dup \u00D7" + tab.duplicateCount;
+    badgesDiv.appendChild(dupBadge);
+  }
+  statusTd.appendChild(badgesDiv);
+  tr.appendChild(statusTd);
+
+  // Actions cell
+  const actionsTd = document.createElement("td");
+  actionsTd.className = "col-actions";
+  const actionsDiv = document.createElement("div");
+  actionsDiv.className = "action-buttons";
+  const goBtn = document.createElement("button");
+  goBtn.className = "btn-goto";
+  goBtn.dataset.tabId = tab.id;
+  goBtn.dataset.windowId = tab.windowId;
+  goBtn.title = "Switch to tab";
+  goBtn.textContent = "Go";
+  actionsDiv.appendChild(goBtn);
+  if (tab.isDuplicate) {
+    const dedupBtn = document.createElement("button");
+    dedupBtn.className = "btn-dedup";
+    dedupBtn.dataset.tabId = tab.id;
+    dedupBtn.title = "Close other duplicates, keep this one";
+    dedupBtn.textContent = "Dedup";
+    actionsDiv.appendChild(dedupBtn);
+  }
+  const ignoreDropdown = document.createElement("div");
+  ignoreDropdown.className = "ignore-dropdown";
+  const ignoreBtn = document.createElement("button");
+  ignoreBtn.className = "btn-ignore";
+  ignoreBtn.title = "Ignore this tab";
+  ignoreBtn.textContent = "Ignore \u25BC";
+  ignoreDropdown.appendChild(ignoreBtn);
+  const ignoreMenu = document.createElement("div");
+  ignoreMenu.className = "ignore-menu";
+  const ignoreUrlBtn = document.createElement("button");
+  ignoreUrlBtn.className = "btn-ignore-url";
+  ignoreUrlBtn.textContent = "Ignore URL";
+  ignoreMenu.appendChild(ignoreUrlBtn);
+  const ignoreDomainBtn = document.createElement("button");
+  ignoreDomainBtn.className = "btn-ignore-domain";
+  ignoreDomainBtn.textContent = "Ignore " + tab.domain;
+  ignoreMenu.appendChild(ignoreDomainBtn);
+  ignoreDropdown.appendChild(ignoreMenu);
+  actionsDiv.appendChild(ignoreDropdown);
+  const closeBtn = document.createElement("button");
+  closeBtn.className = "btn-close";
+  closeBtn.dataset.tabId = tab.id;
+  closeBtn.title = "Close tab";
+  closeBtn.textContent = "\u2715";
+  actionsDiv.appendChild(closeBtn);
+  actionsTd.appendChild(actionsDiv);
+  tr.appendChild(actionsTd);
 
   // Go button
   tr.querySelector(".btn-goto").addEventListener("click", (e) => {
@@ -451,9 +544,18 @@ function populateDomainFilter() {
 
   for (const [domain, count] of sorted) {
     const label = document.createElement("label");
-    label.innerHTML = `<input type="checkbox" name="filterDomain" value="${escapeHtml(domain)}">
-      <span>${escapeHtml(domain)}</span>
-      <span class="domain-item-count">${count}</span>`;
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.name = "filterDomain";
+    checkbox.value = domain;
+    label.appendChild(checkbox);
+    const nameSpan = document.createElement("span");
+    nameSpan.textContent = domain;
+    label.appendChild(nameSpan);
+    const countSpan = document.createElement("span");
+    countSpan.className = "domain-item-count";
+    countSpan.textContent = count;
+    label.appendChild(countSpan);
     label.querySelector("input").addEventListener("change", () => {
       updateDomainButtonLabel();
       render();
@@ -486,6 +588,13 @@ function escapeHtml(str) {
   const div = document.createElement("div");
   div.textContent = str;
   return div.innerHTML;
+}
+
+function createTd(className, text) {
+  const td = document.createElement("td");
+  td.className = className;
+  td.textContent = text;
+  return td;
 }
 
 // --- Ignore lists ---
@@ -558,18 +667,33 @@ function updateIgnoredPanel() {
   urlList.innerHTML = "";
   for (const url of [...ignoredUrls].sort()) {
     const li = document.createElement("li");
-    li.innerHTML = `<span class="ignored-item-text" title="${escapeHtml(url)}">${escapeHtml(url)}</span>
-      <button class="btn-unignore" title="Remove from ignore list">\u2715</button>`;
-    li.querySelector(".btn-unignore").addEventListener("click", () => unignoreUrl(url));
+    const textSpan = document.createElement("span");
+    textSpan.className = "ignored-item-text";
+    textSpan.title = url;
+    textSpan.textContent = url;
+    li.appendChild(textSpan);
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "btn-unignore";
+    removeBtn.title = "Remove from ignore list";
+    removeBtn.textContent = "\u2715";
+    removeBtn.addEventListener("click", () => unignoreUrl(url));
+    li.appendChild(removeBtn);
     urlList.appendChild(li);
   }
 
   domainList.innerHTML = "";
   for (const domain of [...ignoredDomains].sort()) {
     const li = document.createElement("li");
-    li.innerHTML = `<span class="ignored-item-text">${escapeHtml(domain)}</span>
-      <button class="btn-unignore" title="Remove from ignore list">\u2715</button>`;
-    li.querySelector(".btn-unignore").addEventListener("click", () => unignoreDomain(domain));
+    const textSpan = document.createElement("span");
+    textSpan.className = "ignored-item-text";
+    textSpan.textContent = domain;
+    li.appendChild(textSpan);
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "btn-unignore";
+    removeBtn.title = "Remove from ignore list";
+    removeBtn.textContent = "\u2715";
+    removeBtn.addEventListener("click", () => unignoreDomain(domain));
+    li.appendChild(removeBtn);
     domainList.appendChild(li);
   }
 }
