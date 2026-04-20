@@ -492,15 +492,15 @@ function createTabRow(tab) {
   });
 
   // Ignore dropdown toggle
-  const ignoreBtn = tr.querySelector(".btn-ignore");
-  const ignoreMenu = tr.querySelector(".ignore-menu");
-  ignoreBtn.addEventListener("click", (e) => {
+  const ignoreBtnEl = tr.querySelector(".btn-ignore");
+  const ignoreMenuEl = tr.querySelector(".ignore-menu");
+  ignoreBtnEl.addEventListener("click", (e) => {
     e.stopPropagation();
     // Close any other open ignore menus
     document.querySelectorAll(".ignore-menu.open").forEach((m) => {
-      if (m !== ignoreMenu) m.classList.remove("open");
+      if (m !== ignoreMenuEl) m.classList.remove("open");
     });
-    ignoreMenu.classList.toggle("open");
+    ignoreMenuEl.classList.toggle("open");
   });
 
   return tr;

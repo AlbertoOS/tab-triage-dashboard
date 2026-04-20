@@ -4,10 +4,7 @@
   "version": "1.0",
   "browser_specific_settings": {
     "gecko": {
-      "id": "tab-triage@albertoos",
-      "data_collection_permissions": {
-        "required": ["none"]
-      }
+      "id": "tab-triage@albertoos"
     }
   },
   "description": "Full-page tab manager with sorting, filtering, grouping, and search to triage 1000+ tabs.",
