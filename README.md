@@ -23,6 +23,11 @@ A Firefox extension for managing and triaging your tabs with sorting, filtering,
 
 Install from [Firefox Add-ons (AMO)](https://addons.mozilla.org/) — link coming soon.
 
+### Manual install
+
+1. Download the latest `.xpi` from [Releases](../../releases)
+2. In Firefox: `about:addons` → gear icon → **Install Add-on From File** → select the `.xpi`
+
 ## Usage
 
 Click the 🧐 icon in the toolbar to open the triage page.
