@@ -1,4 +1,4 @@
-# 🧐 Tab Triage
+# 🧐 Tab Triage Dashboard
 
 A Firefox extension for managing and triaging your tabs with sorting, filtering, grouping, and bulk actions.
 

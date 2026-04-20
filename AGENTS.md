@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-**Tab Triage** is a Firefox WebExtension (Manifest V2) for managing and triaging large numbers of browser tabs (1000+). It opens a full-page tab manager with sorting, filtering, grouping, and search.
+**Tab Triage Dashboard** is a Firefox WebExtension (Manifest V2) for managing and triaging large numbers of browser tabs (1000+). It opens a full-page tab manager with sorting, filtering, grouping, and search.
 
 ## Architecture
 
