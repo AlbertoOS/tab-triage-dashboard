@@ -1,6 +1,6 @@
 # 🧐 Tab Triage
 
-A Firefox extension for triaging 1000+ tabs with sorting, filtering, grouping, and bulk actions.
+A Firefox extension for managing and triaging your tabs with sorting, filtering, grouping, and bulk actions.
 
 ## Features
 
@@ -19,34 +19,13 @@ A Firefox extension for triaging 1000+ tabs with sorting, filtering, grouping, a
 - **Color coding** — stale tabs (30d+ orange, 90d+ red), high domain count (5+ orange, 20+ red), duplicate rows highlighted
 - **Catppuccin Macchiato** dark theme
 
-## Install (temporary, for development)
+## Install
 
-1. Open `about:debugging` in Firefox
-2. Click **This Firefox** → **Load Temporary Add-on**
-3. Select `manifest.json`
-4. Click the 🧐 icon in the toolbar
+Install from [Firefox Add-ons (AMO)](https://addons.mozilla.org/) — link coming soon.
 
-## Install (permanent, signed)
+## Usage
 
-### Option A: AMO web upload
-
-1. Create an account at [addons.mozilla.org](https://addons.mozilla.org/developers/)
-2. Go to **Submit a New Add-on** → choose **On your own** (self-distributed/unlisted)
-3. Zip the extension: `zip -r tab-triage.zip manifest.json background.js triage.* icons/`
-4. Upload the zip — Mozilla signs it and returns an `.xpi`
-5. In Firefox: `about:addons` → gear icon → **Install Add-on From File** → select the `.xpi`
-
-### Option B: web-ext CLI
-
-```sh
-npm install -g web-ext
-```
-
-Get API credentials at https://addons.mozilla.org/developers/addon/api/key/ then:
-
-```sh
-web-ext sign --api-key=YOUR_KEY --api-secret=YOUR_SECRET
-```
+Click the 🧐 icon in the toolbar to open the triage page.
 
 ## Permissions
 
