@@ -1,3 +1,4 @@
 *.xpi
 *.zip
 web-ext-artifacts/
+node_modules/
