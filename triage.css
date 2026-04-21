@@ -292,6 +292,37 @@ label {
   cursor: pointer;
 }
 
+/* Status toggle buttons (3-state: off / include / exclude) */
+.status-toggle {
+  background: transparent;
+  border: 1px solid #494d64;
+  border-radius: 4px;
+  color: #6e738d;
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+
+.status-toggle:hover {
+  border-color: #8aadf4;
+  color: #cad3f5;
+}
+
+.status-toggle[data-state="include"] {
+  background: rgba(138, 173, 244, 0.15);
+  border-color: #8aadf4;
+  color: #8aadf4;
+}
+
+.status-toggle[data-state="exclude"] {
+  background: rgba(237, 135, 150, 0.15);
+  border-color: #ed8796;
+  color: #ed8796;
+  text-decoration: line-through;
+}
+
 /* Table */
 #table-container {
   overflow-x: auto;

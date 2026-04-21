@@ -127,6 +127,17 @@ function getCheckedValues(name) {
     .map((el) => el.value);
 }
 
+function getStatusFilters() {
+  const include = [];
+  const exclude = [];
+  document.querySelectorAll(".status-toggle").forEach((btn) => {
+    const state = btn.dataset.state;
+    if (state === "include") include.push(btn.dataset.status);
+    if (state === "exclude") exclude.push(btn.dataset.status);
+  });
+  return { include, exclude };
+}
+
 function matchesAgeFilter(tab, ageFilters) {
   // OR logic: tab matches if it fits ANY checked age bucket
   const hr = tab.ageMs / 3600000;
@@ -147,16 +158,27 @@ function matchesAgeFilter(tab, ageFilters) {
 }
 
 function matchesStatusFilter(tab, statusFilters) {
-  // AND logic: tab must match ALL checked statuses
-  for (const f of statusFilters) {
-    switch (f) {
-      case "pinned": if (!tab.pinned) return false; break;
-      case "audible": if (!tab.audible) return false; break;
-      case "muted": if (!tab.mutedInfo || !tab.mutedInfo.muted) return false; break;
-      case "discarded": if (!tab.discarded) return false; break;
-      case "active": if (!tab.active) return false; break;
-      case "duplicate": if (!tab.isDuplicate) return false; break;
+  const { include, exclude } = statusFilters;
+
+  function hasStatus(status) {
+    switch (status) {
+      case "pinned": return !!tab.pinned;
+      case "audible": return !!tab.audible;
+      case "muted": return !!(tab.mutedInfo && tab.mutedInfo.muted);
+      case "discarded": return !!tab.discarded;
+      case "active": return !!tab.active;
+      case "duplicate": return !!tab.isDuplicate;
+      default: return false;
     }
+  }
+
+  // AND logic: tab must have ALL included statuses
+  for (const s of include) {
+    if (!hasStatus(s)) return false;
+  }
+  // AND logic: tab must NOT have ANY excluded statuses
+  for (const s of exclude) {
+    if (hasStatus(s)) return false;
   }
   return true;
 }
@@ -165,7 +187,7 @@ function getFilteredTabs() {
   const search = document.getElementById("search").value.toLowerCase().trim();
   const selectedDomains = getSelectedDomains();
   const ageFilters = getCheckedValues("filterAge");
-  const statusFilters = getCheckedValues("filterStatus");
+  const statusFilters = getStatusFilters();
 
   return enrichedTabs.filter((tab) => {
     // Ignored tabs: hide unless showIgnored is on
@@ -189,8 +211,9 @@ function getFilteredTabs() {
     // Age filter (OR — match any checked bucket)
     if (ageFilters.length > 0 && !matchesAgeFilter(tab, ageFilters)) return false;
 
-    // Status filter (AND — must match all checked)
-    if (statusFilters.length > 0 && !matchesStatusFilter(tab, statusFilters)) return false;
+    // Status filter (AND — include must all match, exclude must all not match)
+    if ((statusFilters.include.length > 0 || statusFilters.exclude.length > 0) &&
+        !matchesStatusFilter(tab, statusFilters)) return false;
 
     return true;
   });
@@ -789,8 +812,13 @@ document.getElementById("domainSelectNone").addEventListener("click", () => {
 document.querySelectorAll('input[name="filterAge"]').forEach((el) => {
   el.addEventListener("change", render);
 });
-document.querySelectorAll('input[name="filterStatus"]').forEach((el) => {
-  el.addEventListener("change", render);
+document.querySelectorAll(".status-toggle").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const states = ["off", "include", "exclude"];
+    const current = states.indexOf(btn.dataset.state);
+    btn.dataset.state = states[(current + 1) % 3];
+    render();
+  });
 });
 
 // Show ignored toggle

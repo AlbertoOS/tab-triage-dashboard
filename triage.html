@@ -60,14 +60,14 @@
           <label><input type="checkbox" name="filterAge" value="365d+"> 365d+</label>
         </fieldset>
 
-        <fieldset class="filter-group">
+        <fieldset class="filter-group filter-group-status">
           <legend>Status</legend>
-          <label><input type="checkbox" name="filterStatus" value="pinned"> Pinned</label>
-          <label><input type="checkbox" name="filterStatus" value="audible"> Audible</label>
-          <label><input type="checkbox" name="filterStatus" value="muted"> Muted</label>
-          <label><input type="checkbox" name="filterStatus" value="discarded"> Discarded</label>
-          <label><input type="checkbox" name="filterStatus" value="active"> Active</label>
-          <label><input type="checkbox" name="filterStatus" value="duplicate"> Duplicate</label>
+          <button class="status-toggle" data-status="pinned" data-state="off">Pinned</button>
+          <button class="status-toggle" data-status="audible" data-state="off">Audible</button>
+          <button class="status-toggle" data-status="muted" data-state="off">Muted</button>
+          <button class="status-toggle" data-status="discarded" data-state="off">Discarded</button>
+          <button class="status-toggle" data-status="active" data-state="off">Active</button>
+          <button class="status-toggle" data-status="duplicate" data-state="off">Duplicate</button>
         </fieldset>
       </div>
 
