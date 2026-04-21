@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Tab Triage Dashboard",
-  "version": "1.0",
+  "version": "1.0.0",
   "browser_specific_settings": {
     "gecko": {
       "id": "tab-triage-dashboard@albertoos",
