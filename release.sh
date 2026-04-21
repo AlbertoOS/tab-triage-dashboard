@@ -78,9 +78,12 @@ if grep -q '"version"' "$PACKAGE"; then
 	sed -i "s/\"version\": *\"[^\"]*\"/\"version\": \"$NEW_VERSION\"/" "$PACKAGE"
 fi
 
-# --- Lint before releasing ---
+# --- Lint and test before releasing ---
 echo "Running lint..."
 npm run lint
+
+echo "Running tests..."
+npm test
 
 # --- Build zip ---
 echo "Building zip..."
@@ -97,12 +100,47 @@ git push && git push --tags
 ZIP_FILE="$ROOT/tab-triage-dashboard.zip"
 if command -v gh &>/dev/null && [ -f "$ZIP_FILE" ]; then
 	echo "Creating GitHub release..."
-	NOTES=""
+	# Build release notes from commits since last tag (excluding the release commit itself)
+	COMMIT_LOG=""
 	if [ -n "$LAST_TAG" ]; then
-		NOTES=$(git log "$LAST_TAG"..HEAD~1 --pretty=format:"- %s")
+		COMMIT_LOG=$(git log "$LAST_TAG"..HEAD~1 --pretty=format:"%s")
 	else
-		NOTES=$(git log HEAD~1 --pretty=format:"- %s")
+		COMMIT_LOG=$(git log HEAD~1 --pretty=format:"%s")
 	fi
+
+	# Categorize commits
+	FEATURES=$(echo "$COMMIT_LOG" | grep -E '^feat(\(.+\))?:' | sed 's/^feat\([^)]*\)\?: //' || true)
+	FIXES=$(echo "$COMMIT_LOG" | grep -E '^fix(\(.+\))?:' | sed 's/^fix\([^)]*\)\?: //' || true)
+	OTHER=$(echo "$COMMIT_LOG" | grep -vE '^(feat|fix)(\(.+\))?:' | grep -vE '^$' || true)
+
+	NOTES="## What's Changed"$'\n'
+	if [ -n "$FEATURES" ]; then
+		NOTES+=$'\n'"### Features"$'\n'
+		while IFS= read -r line; do
+			NOTES+="- $line"$'\n'
+		done <<<"$FEATURES"
+	fi
+	if [ -n "$FIXES" ]; then
+		NOTES+=$'\n'"### Fixes"$'\n'
+		while IFS= read -r line; do
+			NOTES+="- $line"$'\n'
+		done <<<"$FIXES"
+	fi
+	if [ -n "$OTHER" ]; then
+		NOTES+=$'\n'"### Other"$'\n'
+		while IFS= read -r line; do
+			NOTES+="- $line"$'\n'
+		done <<<"$OTHER"
+	fi
+
+	NOTES+=$'\n'"---"$'\n'
+	NOTES+=$'\n'"### All Commits"$'\n'
+	if [ -n "$LAST_TAG" ]; then
+		NOTES+=$(git log "$LAST_TAG"..HEAD~1 --pretty=format:"- %s (%h)")
+	else
+		NOTES+=$(git log HEAD~1 --pretty=format:"- %s (%h)")
+	fi
+
 	gh release create "v$NEW_VERSION" "$ZIP_FILE" \
 		--title "v$NEW_VERSION" \
 		--notes "$NOTES"

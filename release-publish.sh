@@ -31,9 +31,42 @@ fi
 # Get the parent tag for release notes
 PREV_TAG=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || echo "")
 if [ -n "$PREV_TAG" ]; then
-	NOTES=$(git log "$PREV_TAG".."$TAG" --pretty=format:"- %s" | grep -v "^- chore: release" || true)
+	COMMIT_LOG=$(git log "$PREV_TAG".."$TAG" --pretty=format:"%s" | grep -v "^chore: release" | grep -v "^chore: prepare" || true)
 else
-	NOTES=$(git log "$TAG" --pretty=format:"- %s" | grep -v "^- chore: release" || true)
+	COMMIT_LOG=$(git log "$TAG" --pretty=format:"%s" | grep -v "^chore: release" | grep -v "^chore: prepare" || true)
+fi
+
+# Categorize commits
+FEATURES=$(echo "$COMMIT_LOG" | grep -E '^feat(\(.+\))?:' | sed 's/^feat\([^)]*\)\?: //' || true)
+FIXES=$(echo "$COMMIT_LOG" | grep -E '^fix(\(.+\))?:' | sed 's/^fix\([^)]*\)\?: //' || true)
+OTHER=$(echo "$COMMIT_LOG" | grep -vE '^(feat|fix)(\(.+\))?:' | grep -vE '^$' || true)
+
+NOTES="## What's Changed"$'\n'
+if [ -n "$FEATURES" ]; then
+	NOTES+=$'\n'"### Features"$'\n'
+	while IFS= read -r line; do
+		NOTES+="- $line"$'\n'
+	done <<<"$FEATURES"
+fi
+if [ -n "$FIXES" ]; then
+	NOTES+=$'\n'"### Fixes"$'\n'
+	while IFS= read -r line; do
+		NOTES+="- $line"$'\n'
+	done <<<"$FIXES"
+fi
+if [ -n "$OTHER" ]; then
+	NOTES+=$'\n'"### Other"$'\n'
+	while IFS= read -r line; do
+		NOTES+="- $line"$'\n'
+	done <<<"$OTHER"
+fi
+
+NOTES+=$'\n'"---"$'\n'
+NOTES+=$'\n'"### All Commits"$'\n'
+if [ -n "$PREV_TAG" ]; then
+	NOTES+=$(git log "$PREV_TAG".."$TAG" --pretty=format:"- %s (%h)" | grep -v "chore: release" | grep -v "chore: prepare" || true)
+else
+	NOTES+=$(git log "$TAG" --pretty=format:"- %s (%h)" | grep -v "chore: release" | grep -v "chore: prepare" || true)
 fi
 
 if gh release view "$TAG" &>/dev/null; then
