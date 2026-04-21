@@ -7,12 +7,14 @@
 ## Architecture
 
 ```
-background.js    → Minimal message broker (open triage page, tab CRUD)
-triage.html      → Single-page UI shell
-triage.js        → All frontend logic (~850 lines, single file)
-triage.css       → Catppuccin Macchiato dark theme (~720 lines)
-manifest.json    → Manifest V2, Firefox-only (browser.* APIs)
-icons/icon.svg   → Extension icon
+background.js        → Minimal message broker (open triage page, tab CRUD)
+triage.html          → Single-page UI shell
+triage.js            → All frontend logic (~850 lines, single file)
+triage.css           → Catppuccin Macchiato dark theme (~720 lines)
+manifest.json        → Manifest V2, Firefox-only (browser.* APIs)
+icons/icon.svg       → Extension icon
+release.sh           → Release script (version bump, tag, publish)
+release-publish.sh   → Standalone GitHub release publisher
 ```
 
 ### Data Flow
@@ -37,11 +39,31 @@ All state is module-level variables in `triage.js`: `allTabs`, `enrichedTabs`, `
 
 ## Build & Packaging
 
-Source files are the distribution files directly. Package with `web-ext build` or zip manually. The `.gitignore` excludes `*.xpi`, `*.zip`, and `web-ext-artifacts/`.
+Source files are the distribution files directly. Package with `npm run zip` which creates `tab-triage-dashboard.zip` containing only extension source files. The `.gitignore` excludes `*.xpi`, `*.zip`, `web-ext-artifacts/`, and `node_modules/`.
 
 ## Linting
 
 Run `npm run lint` to validate the extension with Mozilla's [addons-linter](https://github.com/mozilla/addons-linter). This zips only extension source files and lints the zip (to avoid scanning `.git/` and `node_modules/`). Warnings are treated as errors (`--warnings-as-errors`). CI runs this on every push and PR via GitHub Actions (`.github/workflows/lint.yml`).
+
+## Releasing
+
+- **`npm run release`** — full release flow:
+  1. Parses conventional commits since last tag to infer semver bump (`feat:` → minor, `fix:` → patch, `BREAKING CHANGE` → major)
+  2. Updates version in `manifest.json` and `package.json`
+  3. Runs lint, builds zip, commits, tags, pushes
+  4. Creates a GitHub release with the zip via `gh` CLI
+  5. Bumps to next dev version and commits
+
+- **`npm run release:publish`** — retry/standalone publish: builds zip if needed and creates or updates the GitHub release for the latest existing tag. Use when the full release failed partway through or a tag was created manually.
+
+## npm Scripts
+
+| Script | Purpose |
+|---|---|
+| `npm run lint` | Validate extension with addons-linter |
+| `npm run zip` | Build `tab-triage-dashboard.zip` from source files |
+| `npm run release` | Full release: bump, lint, zip, tag, push, GitHub release, prep next dev |
+| `npm run release:publish` | Create/update GitHub release for the latest tag |
 
 ## Key Conventions
 
@@ -72,6 +94,9 @@ Run `npm run lint` to validate the extension with Mozilla's [addons-linter](http
 | `triage.css` | Full styling with Catppuccin Macchiato palette |
 | `triage.html` | Page structure: toolbar, filters, table, stats bar, panels |
 | `manifest.json` | Extension metadata, permissions (`tabs`, `storage`, `<all_urls>`) |
+| `release.sh` | Full release automation script |
+| `release-publish.sh` | Standalone GitHub release publisher |
+| `AMO_LISTING.md` | Reference for Firefox Add-ons submission form |
 
 ## Important Patterns
 
