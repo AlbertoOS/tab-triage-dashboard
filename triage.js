@@ -393,6 +393,7 @@ function createTabRow(tab) {
   tr.querySelector(".btn-close").addEventListener("click", async (e) => {
     e.stopPropagation();
     await api.runtime.sendMessage({ type: "closeTab", tabId: tab.id });
+    showUndoToast(`Closed "${tab.title}"`, 1);
     loadTabs();
   });
 
@@ -408,6 +409,7 @@ function createTabRow(tab) {
         .map((t) => t.id);
       if (dupeIds.length === 0) return;
       await api.runtime.sendMessage({ type: "closeTabs", tabIds: dupeIds });
+      showUndoToast(`Closed ${dupeIds.length} duplicate tab${dupeIds.length > 1 ? "s" : ""}`, dupeIds.length);
       loadTabs();
     });
   }
@@ -806,6 +808,35 @@ document.addEventListener("keydown", (e) => {
     }
   }
 });
+
+// --- Undo toast ---
+let undoTimer = null;
+
+function showUndoToast(message, count) {
+  const toast = document.getElementById("undo-toast");
+  const msgEl = document.getElementById("undo-toast-msg");
+  const btn = document.getElementById("undo-toast-btn");
+
+  clearTimeout(undoTimer);
+  msgEl.textContent = message;
+  toast.hidden = false;
+
+  // Replace button to clear old listeners
+  const newBtn = btn.cloneNode(true);
+  btn.replaceWith(newBtn);
+
+  newBtn.addEventListener("click", async () => {
+    const type = count > 1 ? "restoreTabs" : "restoreTab";
+    await api.runtime.sendMessage({ type, count });
+    toast.hidden = true;
+    clearTimeout(undoTimer);
+    loadTabs();
+  });
+
+  undoTimer = setTimeout(() => {
+    toast.hidden = true;
+  }, 5000);
+}
 
 // --- Init ---
 loadTabs();

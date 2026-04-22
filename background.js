@@ -32,4 +32,18 @@ api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     api.tabs.discard(msg.tabId).then(() => sendResponse({ ok: true }));
     return true;
   }
+  if (msg.type === "restoreTab") {
+    api.sessions.restore().then(() => sendResponse({ ok: true }));
+    return true;
+  }
+  if (msg.type === "restoreTabs") {
+    const count = msg.count || 1;
+    (async () => {
+      for (let i = 0; i < count; i++) {
+        await api.sessions.restore();
+      }
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
 });

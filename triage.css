@@ -775,6 +775,51 @@ tr.group-header td:hover {
   background: rgba(237, 135, 150, 0.3);
 }
 
+/* Undo toast */
+.undo-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--surface1);
+  border: 1px solid var(--surface2);
+  border-radius: 8px;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  z-index: 100;
+  font-size: 13px;
+  color: var(--text);
+  animation: toast-in 0.2s ease-out;
+}
+
+.undo-toast[hidden] {
+  display: none;
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(12px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+.btn-undo {
+  background: var(--blue);
+  color: var(--base);
+  border: none;
+  border-radius: 4px;
+  padding: 4px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+  font-weight: 600;
+}
+
+.btn-undo:hover {
+  filter: brightness(1.15);
+}
+
 /* Responsive */
 @media (max-width: 1200px) {
   .tab-title-text, .tab-url {

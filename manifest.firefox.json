@@ -13,7 +13,8 @@
   },
   "permissions": [
     "tabs",
-    "storage"
+    "storage",
+    "sessions"
   ],
   "host_permissions": [
     "<all_urls>"

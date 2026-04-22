@@ -5,7 +5,8 @@
   "description": "Triage your tabs — sort by age, filter by status, group by domain, and close duplicates. A bit of organization to a tab chaos. :)",
   "permissions": [
     "tabs",
-    "storage"
+    "storage",
+    "sessions"
   ],
   "host_permissions": [
     "<all_urls>"
