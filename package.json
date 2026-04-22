@@ -1,7 +1,7 @@
 {
   "private": true,
   "name": "tab-triage-dashboard",
-  "version": "1.2.0",
+  "version": "1.2.0-dev",
   "description": "Full-page tab manager with sorting, filtering, grouping, and search to triage 1000+ tabs.",
   "scripts": {
     "zip": "npm run zip:firefox && npm run zip:chrome",
