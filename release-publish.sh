@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-ZIP_FILE="$ROOT/tab-triage-dashboard.zip"
+ZIP_FF="$ROOT/tab-triage-dashboard-firefox.zip"
+ZIP_CR="$ROOT/tab-triage-dashboard-chrome.zip"
 
 # --- Determine tag ---
 TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
@@ -13,9 +14,9 @@ fi
 
 echo "Publishing release for tag: $TAG"
 
-# --- Build zip if missing ---
-if [ ! -f "$ZIP_FILE" ]; then
-	echo "Building zip..."
+# --- Build zips if missing ---
+if [ ! -f "$ZIP_FF" ] || [ ! -f "$ZIP_CR" ]; then
+	echo "Building zips..."
 	npm run zip
 fi
 
@@ -70,13 +71,13 @@ else
 fi
 
 if gh release view "$TAG" &>/dev/null; then
-	echo "Release $TAG exists, uploading zip..."
-	gh release upload "$TAG" "$ZIP_FILE" --clobber
+	echo "Release $TAG exists, uploading zips..."
+	gh release upload "$TAG" "$ZIP_FF" "$ZIP_CR" --clobber
 else
 	echo "Creating GitHub release..."
-	gh release create "$TAG" "$ZIP_FILE" \
+	gh release create "$TAG" "$ZIP_FF" "$ZIP_CR" \
 		--title "$TAG" \
 		--notes "$NOTES"
 fi
 
-echo "Done. Published $TAG with $ZIP_FILE."
+echo "Done. Published $TAG with Firefox and Chrome zips."

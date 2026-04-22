@@ -2,11 +2,12 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-MANIFEST="$ROOT/manifest.json"
+MANIFEST_FF="$ROOT/manifest.firefox.json"
+MANIFEST_CR="$ROOT/manifest.chrome.json"
 PACKAGE="$ROOT/package.json"
 
-# --- Read current version from manifest.json ---
-CURRENT=$(grep '"version"' "$MANIFEST" | head -1 | sed 's/.*"version": *"\([^"]*\)".*/\1/')
+# --- Read current version from manifest.firefox.json ---
+CURRENT=$(grep '"version"' "$MANIFEST_FF" | head -1 | sed 's/.*"version": *"\([^"]*\)".*/\1/')
 
 # Normalize to semver (e.g. "1.0" -> "1.0.0")
 IFS='.' read -r MAJOR MINOR PATCH <<<"$CURRENT"
@@ -72,8 +73,9 @@ if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
 	exit 1
 fi
 
-# --- Update version in manifest.json and package.json ---
-sed -i "s/\"version\": *\"$CURRENT\"/\"version\": \"$NEW_VERSION\"/" "$MANIFEST"
+# --- Update version in manifest files and package.json ---
+sed -i "s/\"version\": *\"$CURRENT\"/\"version\": \"$NEW_VERSION\"/" "$MANIFEST_FF"
+sed -i "s/\"version\": *\"$CURRENT\"/\"version\": \"$NEW_VERSION\"/" "$MANIFEST_CR"
 if grep -q '"version"' "$PACKAGE"; then
 	sed -i "s/\"version\": *\"[^\"]*\"/\"version\": \"$NEW_VERSION\"/" "$PACKAGE"
 fi
@@ -90,15 +92,16 @@ echo "Building zip..."
 npm run zip
 
 # --- Commit version bump, tag, and create GitHub release ---
-git add "$MANIFEST" "$PACKAGE"
+git add "$MANIFEST_FF" "$MANIFEST_CR" "$PACKAGE"
 git commit -m "chore: release v$NEW_VERSION"
 git tag -a "v$NEW_VERSION" -m "v$NEW_VERSION"
 
 echo "Pushing tag..."
 git push && git push --tags
 
-ZIP_FILE="$ROOT/tab-triage-dashboard.zip"
-if command -v gh &>/dev/null && [ -f "$ZIP_FILE" ]; then
+ZIP_FF="$ROOT/tab-triage-dashboard-firefox.zip"
+ZIP_CR="$ROOT/tab-triage-dashboard-chrome.zip"
+if command -v gh &>/dev/null && [ -f "$ZIP_FF" ]; then
 	echo "Creating GitHub release..."
 	# Build release notes from commits since last tag (excluding the release commit itself)
 	COMMIT_LOG=""
@@ -141,7 +144,7 @@ if command -v gh &>/dev/null && [ -f "$ZIP_FILE" ]; then
 		NOTES+=$(git log HEAD~1 --pretty=format:"- %s (%h)")
 	fi
 
-	gh release create "v$NEW_VERSION" "$ZIP_FILE" \
+	gh release create "v$NEW_VERSION" "$ZIP_FF" "$ZIP_CR" \
 		--title "v$NEW_VERSION" \
 		--notes "$NOTES"
 else
@@ -150,12 +153,13 @@ fi
 
 # --- Prepare next development version ---
 NEXT_VERSION="$NEW_VERSION-dev"
-sed -i "s/\"version\": *\"$NEW_VERSION\"/\"version\": \"$NEXT_VERSION\"/" "$MANIFEST"
+sed -i "s/\"version\": *\"$NEW_VERSION\"/\"version\": \"$NEXT_VERSION\"/" "$MANIFEST_FF"
+sed -i "s/\"version\": *\"$NEW_VERSION\"/\"version\": \"$NEXT_VERSION\"/" "$MANIFEST_CR"
 if grep -q '"version"' "$PACKAGE"; then
 	sed -i "s/\"version\": *\"$NEW_VERSION\"/\"version\": \"$NEXT_VERSION\"/" "$PACKAGE"
 fi
 
-git add "$MANIFEST" "$PACKAGE"
+git add "$MANIFEST_FF" "$MANIFEST_CR" "$PACKAGE"
 git commit -m "chore: prepare for next development iteration"
 git push
 

@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "Tab Triage Dashboard",
+  "version": "1.1.0",
+  "description": "Full-page tab manager with sorting, filtering, grouping, and search to triage 1000+ tabs.",
+  "permissions": [
+    "tabs",
+    "storage"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Tab Triage Dashboard",
+    "default_icon": {
+      "48": "icons/icon-48.png",
+      "96": "icons/icon-96.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "icons": {
+    "48": "icons/icon-48.png",
+    "96": "icons/icon-96.png",
+    "128": "icons/icon-128.png"
+  }
+}

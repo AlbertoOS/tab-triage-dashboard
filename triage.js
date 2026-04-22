@@ -1,6 +1,9 @@
 // Tab Triage Dashboard — triage page logic
 // Pure utility functions are in utils.js (loaded before this file)
 
+// Cross-browser compatibility: Firefox exposes `browser`, Chrome exposes `chrome`
+const api = globalThis.browser || chrome;
+
 let allTabs = [];
 let enrichedTabs = [];
 let currentSort = []; // Array of { key, dir } for multi-column sort
@@ -13,7 +16,7 @@ let showIgnored = false;
 
 async function loadTabs() {
   await loadIgnoreLists();
-  const response = await browser.runtime.sendMessage({ type: "getTabs" });
+  const response = await api.runtime.sendMessage({ type: "getTabs" });
   allTabs = response.tabs;
   enrichTabs();
   populateDomainFilter();
@@ -368,7 +371,7 @@ function createTabRow(tab) {
   // Go button
   tr.querySelector(".btn-goto").addEventListener("click", (e) => {
     e.stopPropagation();
-    browser.runtime.sendMessage({
+    api.runtime.sendMessage({
       type: "goToTab",
       tabId: tab.id,
       windowId: tab.windowId,
@@ -378,7 +381,7 @@ function createTabRow(tab) {
   // Close button
   tr.querySelector(".btn-close").addEventListener("click", async (e) => {
     e.stopPropagation();
-    await browser.runtime.sendMessage({ type: "closeTab", tabId: tab.id });
+    await api.runtime.sendMessage({ type: "closeTab", tabId: tab.id });
     loadTabs();
   });
 
@@ -393,7 +396,7 @@ function createTabRow(tab) {
         .filter((t) => t.id !== tab.id && normalizeUrl(t.url || "") === normUrl)
         .map((t) => t.id);
       if (dupeIds.length === 0) return;
-      await browser.runtime.sendMessage({ type: "closeTabs", tabIds: dupeIds });
+      await api.runtime.sendMessage({ type: "closeTabs", tabIds: dupeIds });
       loadTabs();
     });
   }
@@ -519,13 +522,13 @@ function createTd(className, text) {
 // --- Ignore lists ---
 
 async function loadIgnoreLists() {
-  const result = await browser.storage.local.get(["ignoredUrls", "ignoredDomains"]);
+  const result = await api.storage.local.get(["ignoredUrls", "ignoredDomains"]);
   ignoredUrls = new Set(result.ignoredUrls || []);
   ignoredDomains = new Set(result.ignoredDomains || []);
 }
 
 async function saveIgnoreLists() {
-  await browser.storage.local.set({
+  await api.storage.local.set({
     ignoredUrls: [...ignoredUrls],
     ignoredDomains: [...ignoredDomains],
   });
@@ -749,11 +752,11 @@ function applyFaviconSize(size) {
 faviconSlider.addEventListener("input", () => {
   const size = faviconSlider.value;
   applyFaviconSize(size);
-  browser.storage.local.set({ faviconSize: Number(size) });
+  api.storage.local.set({ faviconSize: Number(size) });
 });
 
 // Restore saved favicon size
-browser.storage.local.get("faviconSize").then((result) => {
+api.storage.local.get("faviconSize").then((result) => {
   if (result.faviconSize) applyFaviconSize(result.faviconSize);
 });
 
