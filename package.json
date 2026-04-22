@@ -4,10 +4,10 @@
   "version": "1.2.0",
   "description": "Full-page tab manager with sorting, filtering, grouping, and search to triage 1000+ tabs.",
   "scripts": {
-    "zip": "npm run zip:firefox && npm run zip:chrome",
-    "zip:firefox": "cp manifest.firefox.json manifest.json && zip -r -FS tab-triage-dashboard-firefox.zip manifest.json background.js triage.html triage.js utils.js triage.css icons/ -x '*.DS_Store' && rm manifest.json",
-    "zip:chrome": "cp manifest.chrome.json manifest.json && zip -r -FS tab-triage-dashboard-chrome.zip manifest.json background.js triage.html triage.js utils.js triage.css icons/ -x '*.DS_Store' && rm manifest.json",
-    "lint": "cp manifest.firefox.json manifest.json && zip -r -FS /tmp/tab-triage-dashboard-lint.zip manifest.json background.js triage.html triage.js utils.js triage.css icons/ -x '*.DS_Store' && rm manifest.json && addons-linter /tmp/tab-triage-dashboard-lint.zip --boring --warnings-as-errors; EXIT=$?; rm -f /tmp/tab-triage-dashboard-lint.zip; exit $EXIT",
+    "zip": "bash build-zip.sh all",
+    "zip:firefox": "bash build-zip.sh firefox",
+    "zip:chrome": "bash build-zip.sh chrome",
+    "lint": "bash build-zip.sh firefox && addons-linter tab-triage-dashboard-firefox.zip --boring --warnings-as-errors",
     "test": "node --test 'test/**/*.test.js'",
     "release": "bash release.sh",
     "release:publish": "bash release-publish.sh"
