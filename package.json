@@ -1,7 +1,7 @@
 {
   "private": true,
   "name": "tab-triage-dashboard",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Full-page tab manager for Firefox with sorting, filtering, grouping, and search.",
   "scripts": {
     "zip": "zip -r -FS tab-triage-dashboard.zip manifest.json background.js triage.html triage.js utils.js triage.css icons/ -x '*.DS_Store'",
