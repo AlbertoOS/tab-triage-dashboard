@@ -151,17 +151,7 @@ else
 	echo "Skipping GitHub release (gh CLI not found or zip missing)."
 fi
 
-# --- Prepare next development version ---
-NEXT_VERSION="$NEW_VERSION-dev"
-sed -i "s/\"version\": *\"$NEW_VERSION\"/\"version\": \"$NEXT_VERSION\"/" "$MANIFEST_FF"
-sed -i "s/\"version\": *\"$NEW_VERSION\"/\"version\": \"$NEXT_VERSION\"/" "$MANIFEST_CR"
-if grep -q '"version"' "$PACKAGE"; then
-	sed -i "s/\"version\": *\"$NEW_VERSION\"/\"version\": \"$NEXT_VERSION\"/" "$PACKAGE"
-fi
-
-git add "$MANIFEST_FF" "$MANIFEST_CR" "$PACKAGE"
-git commit -m "chore: prepare for next development iteration"
 git push
 
 echo ""
-echo "Released v$NEW_VERSION and prepared $NEXT_VERSION for development."
+echo "Released v$NEW_VERSION."
