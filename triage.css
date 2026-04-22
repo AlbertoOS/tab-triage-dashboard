@@ -620,10 +620,7 @@ tr.group-header td:hover {
 
 .more-menu {
   display: none;
-  position: absolute;
-  top: 100%;
-  right: 0;
-  margin-top: 4px;
+  position: fixed;
   background: #24273a;
   border: 1px solid #494d64;
   border-radius: 4px;

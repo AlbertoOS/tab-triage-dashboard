@@ -440,6 +440,11 @@ function createTabRow(tab) {
     document.querySelectorAll(".more-menu.open").forEach((m) => {
       if (m !== moreMenuEl) m.classList.remove("open");
     });
+    // Position menu relative to button
+    const rect = moreBtnEl.getBoundingClientRect();
+    moreMenuEl.style.top = `${rect.bottom + 4}px`;
+    moreMenuEl.style.left = `${rect.right}px`;
+    moreMenuEl.style.transform = "translateX(-100%)";
     moreMenuEl.classList.toggle("open");
   });
 
