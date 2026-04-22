@@ -12,7 +12,7 @@ function getDomain(url) {
 function normalizeUrl(url) {
   try {
     const u = new URL(url);
-    return (u.origin + u.pathname + u.search).replace(/\/+$/, "");
+    return (u.origin + u.pathname + u.search + u.hash).replace(/\/+$/, "");
   } catch {
     return url;
   }

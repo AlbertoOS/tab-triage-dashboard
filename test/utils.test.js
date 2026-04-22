@@ -38,10 +38,10 @@ describe("getDomain", () => {
 // --- normalizeUrl ---
 
 describe("normalizeUrl", () => {
-  it("normalizes URL to origin + pathname + search", () => {
+  it("normalizes URL to origin + pathname + search + hash", () => {
     assert.equal(
       normalizeUrl("https://example.com/path?q=1#hash"),
-      "https://example.com/path?q=1",
+      "https://example.com/path?q=1#hash",
     );
   });
 
@@ -60,6 +60,13 @@ describe("normalizeUrl", () => {
     assert.equal(
       normalizeUrl("https://example.com"),
       "https://example.com",
+    );
+  });
+
+  it("distinguishes URLs that differ only by hash fragment", () => {
+    assert.notEqual(
+      normalizeUrl("https://portal.azure.com/#@tenant/resource/sub1"),
+      normalizeUrl("https://portal.azure.com/#@tenant/resource/sub2"),
     );
   });
 });
