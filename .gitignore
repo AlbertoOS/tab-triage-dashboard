@@ -2,3 +2,4 @@
 *.zip
 web-ext-artifacts/
 node_modules/
+manifest.json

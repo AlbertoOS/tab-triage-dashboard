@@ -17,19 +17,26 @@ fi
 VERSION="$BASE_VERSION.$BUILD"
 echo "Build version: $VERSION"
 
-SRC_FILES="manifest.json background.js triage.html triage.js utils.js triage.css icons/"
+SRC_FILES="background.js triage.html triage.js utils.js triage.css icons/"
 
 build_zip() {
 	local browser="$1"
 	local manifest_src="$ROOT/manifest.${browser}.json"
 	local zip_out="$ROOT/tab-triage-dashboard-${browser}.zip"
+	local tmpdir
+	tmpdir=$(mktemp -d)
 
-	# Copy manifest and inject computed version
-	cp "$manifest_src" "$ROOT/manifest.json"
-	sed -i "s/\"version\": *\"[^\"]*\"/\"version\": \"$VERSION\"/" "$ROOT/manifest.json"
+	# Copy sources to temp dir
+	for f in $SRC_FILES; do
+		cp -r "$ROOT/$f" "$tmpdir/"
+	done
 
-	(cd "$ROOT" && zip -r -FS "$zip_out" $SRC_FILES -x '*.DS_Store')
-	rm "$ROOT/manifest.json"
+	# Copy manifest with computed version
+	cp "$manifest_src" "$tmpdir/manifest.json"
+	sed -i "s/\"version\": *\"[^\"]*\"/\"version\": \"$VERSION\"/" "$tmpdir/manifest.json"
+
+	(cd "$tmpdir" && zip -r -FS "$zip_out" manifest.json $SRC_FILES -x '*.DS_Store')
+	rm -rf "$tmpdir"
 	echo "Built $zip_out (v$VERSION)"
 }
 
