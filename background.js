@@ -4,10 +4,7 @@
 // Cross-browser compatibility: Firefox exposes `browser`, Chrome exposes `chrome`
 const api = globalThis.browser || chrome;
 
-// Firefox uses browserAction (MV2), Chrome MV3 uses action
-const browserAction = api.browserAction || api.action;
-
-browserAction.onClicked.addListener(() => {
+api.action.onClicked.addListener(() => {
   api.tabs.create({ url: api.runtime.getURL("triage.html") });
 });
 
