@@ -11,6 +11,7 @@ let collapsedGroups = new Set();
 let ignoredUrls = new Set();
 let ignoredDomains = new Set();
 let showIgnored = false;
+let fuzzySearch = false;
 
 // --- Data ---
 
@@ -101,7 +102,12 @@ function getFilteredTabs() {
     // Search
     if (search) {
       const haystack = `${tab.title || ""} ${tab.url || ""} ${tab.domain}`.toLowerCase();
-      if (!haystack.includes(search)) return false;
+      if (fuzzySearch) {
+        const terms = search.split(/\s+/);
+        if (!terms.every((term) => haystack.includes(term))) return false;
+      } else {
+        if (!haystack.includes(search)) return false;
+      }
     }
 
     // Domain filter (OR — match any checked domain; empty = all)
@@ -723,6 +729,16 @@ document.querySelectorAll(".status-toggle").forEach((btn) => {
 // Show ignored toggle
 document.getElementById("showIgnored").addEventListener("change", (e) => {
   showIgnored = e.target.checked;
+  render();
+});
+
+// Fuzzy search toggle
+document.getElementById("fuzzyToggle").addEventListener("click", () => {
+  fuzzySearch = !fuzzySearch;
+  document.getElementById("fuzzyToggle").classList.toggle("active", fuzzySearch);
+  document.getElementById("search").placeholder = fuzzySearch
+    ? "Fuzzy search (match all words in any order)..."
+    : "Search tabs (title, URL, domain)...";
   render();
 });
 
