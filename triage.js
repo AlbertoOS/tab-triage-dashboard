@@ -346,25 +346,30 @@ function createTabRow(tab) {
     dedupBtn.textContent = "Dedup";
     actionsDiv.appendChild(dedupBtn);
   }
-  const ignoreDropdown = document.createElement("div");
-  ignoreDropdown.className = "ignore-dropdown";
-  const ignoreBtn = document.createElement("button");
-  ignoreBtn.className = "btn-ignore";
-  ignoreBtn.title = "Ignore this tab";
-  ignoreBtn.textContent = "Ignore \u25BC";
-  ignoreDropdown.appendChild(ignoreBtn);
-  const ignoreMenu = document.createElement("div");
-  ignoreMenu.className = "ignore-menu";
+  const moreDropdown = document.createElement("div");
+  moreDropdown.className = "more-dropdown";
+  const moreBtn = document.createElement("button");
+  moreBtn.className = "btn-more";
+  moreBtn.title = "More actions";
+  moreBtn.textContent = "\u22EE";
+  moreDropdown.appendChild(moreBtn);
+  const moreMenu = document.createElement("div");
+  moreMenu.className = "more-menu";
+  const discardBtn = document.createElement("button");
+  discardBtn.className = "btn-discard";
+  discardBtn.textContent = "Discard tab";
+  if (tab.discarded) discardBtn.disabled = true;
+  moreMenu.appendChild(discardBtn);
   const ignoreUrlBtn = document.createElement("button");
   ignoreUrlBtn.className = "btn-ignore-url";
   ignoreUrlBtn.textContent = "Ignore URL";
-  ignoreMenu.appendChild(ignoreUrlBtn);
+  moreMenu.appendChild(ignoreUrlBtn);
   const ignoreDomainBtn = document.createElement("button");
   ignoreDomainBtn.className = "btn-ignore-domain";
   ignoreDomainBtn.textContent = "Ignore " + tab.domain;
-  ignoreMenu.appendChild(ignoreDomainBtn);
-  ignoreDropdown.appendChild(ignoreMenu);
-  actionsDiv.appendChild(ignoreDropdown);
+  moreMenu.appendChild(ignoreDomainBtn);
+  moreDropdown.appendChild(moreMenu);
+  actionsDiv.appendChild(moreDropdown);
   const closeBtn = document.createElement("button");
   closeBtn.className = "btn-close";
   closeBtn.dataset.tabId = tab.id;
@@ -419,16 +424,23 @@ function createTabRow(tab) {
     ignoreDomain(tab.domain);
   });
 
-  // Ignore dropdown toggle
-  const ignoreBtnEl = tr.querySelector(".btn-ignore");
-  const ignoreMenuEl = tr.querySelector(".ignore-menu");
-  ignoreBtnEl.addEventListener("click", (e) => {
+  // Discard tab button
+  tr.querySelector(".btn-discard").addEventListener("click", async (e) => {
     e.stopPropagation();
-    // Close any other open ignore menus
-    document.querySelectorAll(".ignore-menu.open").forEach((m) => {
-      if (m !== ignoreMenuEl) m.classList.remove("open");
+    await api.runtime.sendMessage({ type: "discardTab", tabId: tab.id });
+    loadTabs();
+  });
+
+  // More menu toggle
+  const moreBtnEl = tr.querySelector(".btn-more");
+  const moreMenuEl = tr.querySelector(".more-menu");
+  moreBtnEl.addEventListener("click", (e) => {
+    e.stopPropagation();
+    // Close any other open menus
+    document.querySelectorAll(".more-menu.open").forEach((m) => {
+      if (m !== moreMenuEl) m.classList.remove("open");
     });
-    ignoreMenuEl.classList.toggle("open");
+    moreMenuEl.classList.toggle("open");
   });
 
   return tr;
@@ -682,8 +694,8 @@ document.addEventListener("click", (e) => {
   if (!e.target.closest(".domain-filter")) {
     domainPanel.classList.remove("open");
   }
-  if (!e.target.closest(".ignore-dropdown")) {
-    document.querySelectorAll(".ignore-menu.open").forEach((m) => m.classList.remove("open"));
+  if (!e.target.closest(".more-dropdown")) {
+    document.querySelectorAll(".more-menu.open").forEach((m) => m.classList.remove("open"));
   }
 });
 

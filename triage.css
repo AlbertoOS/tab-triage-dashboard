@@ -597,28 +597,28 @@ tr.group-header td:hover {
   background: rgba(245, 169, 127, 0.3);
 }
 
-.ignore-dropdown {
+.more-dropdown {
   position: relative;
 }
 
-.btn-ignore {
-  padding: 3px 8px;
+.btn-more {
+  padding: 3px 6px;
   background: rgba(110, 115, 141, 0.15);
   color: #6e738d;
   border: 1px solid rgba(110, 115, 141, 0.3);
   border-radius: 3px;
   cursor: pointer;
-  font-size: 11px;
+  font-size: 16px;
   font-family: inherit;
-  white-space: nowrap;
+  line-height: 1;
 }
 
-.btn-ignore:hover {
+.btn-more:hover {
   background: rgba(110, 115, 141, 0.3);
   color: #a5adcb;
 }
 
-.ignore-menu {
+.more-menu {
   display: none;
   position: absolute;
   top: 100%;
@@ -632,12 +632,12 @@ tr.group-header td:hover {
   min-width: 160px;
 }
 
-.ignore-menu.open {
+.more-menu.open {
   display: flex;
   flex-direction: column;
 }
 
-.ignore-menu button {
+.more-menu button {
   padding: 6px 12px;
   background: none;
   border: none;
@@ -650,16 +650,26 @@ tr.group-header td:hover {
   white-space: nowrap;
 }
 
-.ignore-menu button:hover {
+.more-menu button:hover {
   background: rgba(138, 173, 244, 0.1);
   color: #cad3f5;
 }
 
-.ignore-menu button:first-child {
+.more-menu button:disabled {
+  color: #494d64;
+  cursor: default;
+}
+
+.more-menu button:disabled:hover {
+  background: none;
+  color: #494d64;
+}
+
+.more-menu button:first-child {
   border-radius: 4px 4px 0 0;
 }
 
-.ignore-menu button:last-child {
+.more-menu button:last-child {
   border-radius: 0 0 4px 4px;
 }
 

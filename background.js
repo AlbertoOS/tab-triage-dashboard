@@ -28,4 +28,8 @@ api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     api.tabs.remove(msg.tabIds).then(() => sendResponse({ ok: true }));
     return true;
   }
+  if (msg.type === "discardTab") {
+    api.tabs.discard(msg.tabId).then(() => sendResponse({ ok: true }));
+    return true;
+  }
 });
