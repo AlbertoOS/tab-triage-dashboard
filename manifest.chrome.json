@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Tab Triage Dashboard",
   "version": "1.3.0",
-  "description": "Full-page tab manager with sorting, filtering, grouping, and search to triage 1000+ tabs.",
+  "description": "Triage your tabs — sort by age, filter by status, group by domain, and close duplicates. A bit of organization to a tab chaos. :)",
   "permissions": [
     "tabs",
     "storage"
