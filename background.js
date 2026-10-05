@@ -25,7 +25,17 @@ api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg.type === "closeTabs") {
-    api.tabs.remove(msg.tabIds).then(() => sendResponse({ ok: true }));
+    // Tabs may have been closed elsewhere since the dashboard was refreshed.
+    api.tabs.query({}).then(async (tabs) => {
+      const dashboardUrl = api.runtime.getURL("triage.html");
+      const requestedIds = new Set(msg.tabIds);
+      const tabIds = tabs
+        .filter((tab) => requestedIds.has(tab.id) &&
+          (tab.url || "").split(/[?#]/)[0] !== dashboardUrl)
+        .map((tab) => tab.id);
+      if (tabIds.length > 0) await api.tabs.remove(tabIds);
+      sendResponse({ ok: true });
+    }).catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
 });

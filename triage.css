@@ -419,6 +419,15 @@ tr.group-header td:hover {
 }
 
 /* Column widths */
+.col-select { width: 36px; text-align: center; }
+.col-select input { accent-color: #8aadf4; cursor: pointer; }
+tr.selected { background: rgba(138, 173, 244, 0.15); }
+.bulk-actions { margin-bottom: 12px; }
+.btn-close-selected { color: #ed8796; border-color: #ed8796; }
+button:disabled { opacity: 0.45; cursor: default; }
+#selectionStatus { color: #a5adcb; font-size: 12px; }
+#bulkError { color: #ed8796; font-size: 12px; }
+
 .col-index { width: 50px; text-align: right; }
 .col-title { min-width: 300px; }
 .col-domain { min-width: 150px; }

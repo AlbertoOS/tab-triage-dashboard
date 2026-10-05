@@ -11,6 +11,8 @@ let collapsedGroups = new Set();
 let ignoredUrls = new Set();
 let ignoredDomains = new Set();
 let showIgnored = false;
+let selectedTabIds = new Set();
+let closingSelected = false;
 
 // --- Data ---
 
@@ -181,8 +183,71 @@ function groupTabs(tabs) {
 
 // --- Rendering ---
 
+function isSelectableTab(tab) {
+  return (tab.url || "").split(/[?#]/)[0] !== api.runtime.getURL("triage.html");
+}
+
+function syncSelection(tabs) {
+  const eligibleIds = new Set(tabs.filter(isSelectableTab).map((tab) => tab.id));
+  for (const id of selectedTabIds) {
+    if (!eligibleIds.has(id)) selectedTabIds.delete(id);
+  }
+}
+
+function updateSelectionControls(tabs = getFilteredTabs()) {
+  const eligibleCount = tabs.filter(isSelectableTab).length;
+  const count = selectedTabIds.size;
+  const selectAll = document.getElementById("selectAllTabs");
+  selectAll.checked = count > 0 && count === eligibleCount;
+  selectAll.indeterminate = count > 0 && count < eligibleCount;
+  selectAll.disabled = closingSelected || eligibleCount === 0;
+  document.getElementById("selectFiltered").disabled = closingSelected || eligibleCount === 0;
+  document.getElementById("clearSelection").disabled = closingSelected || count === 0;
+  const closeButton = document.getElementById("closeSelected");
+  closeButton.disabled = closingSelected || count === 0;
+  closeButton.textContent = closingSelected ? `Closing ${count} tabs...` : `Close selected (${count})`;
+  document.getElementById("selectionStatus").textContent = `${count} tabs selected`;
+}
+
+function selectFilteredTabs(selected) {
+  selectedTabIds = new Set(selected ? getFilteredTabs().filter(isSelectableTab).map((tab) => tab.id) : []);
+  document.getElementById("bulkError").textContent = "";
+  render();
+}
+
+async function closeSelectedTabs() {
+  if (closingSelected) return;
+  syncSelection(getFilteredTabs());
+  const tabIds = [...selectedTabIds];
+  if (tabIds.length === 0) {
+    render();
+    return;
+  }
+
+  closingSelected = true;
+  document.getElementById("bulkError").textContent = "";
+  render();
+  try {
+    const response = await api.runtime.sendMessage({ type: "closeTabs", tabIds });
+    if (!response || !response.ok) throw new Error(response?.error || "Could not close selected tabs.");
+    selectedTabIds.clear();
+  } catch (error) {
+    document.getElementById("bulkError").textContent = `Could not close selected tabs: ${error.message}`;
+  } finally {
+    try {
+      await loadTabs();
+    } catch (error) {
+      document.getElementById("bulkError").textContent = `Could not refresh tabs: ${error.message}`;
+    }
+    closingSelected = false;
+    render();
+  }
+}
+
 function render() {
   const filtered = getFilteredTabs();
+  syncSelection(filtered);
+  updateSelectionControls(filtered);
   const sorted = sortTabs(filtered);
   const groups = groupTabs(sorted);
 
@@ -198,7 +263,7 @@ function render() {
       const headerRow = document.createElement("tr");
       headerRow.className = "group-header";
       const headerTd = document.createElement("td");
-      headerTd.colSpan = 9;
+      headerTd.colSpan = 10;
       headerTd.textContent = (collapsedGroups.has(groupName) ? "\u25B6" : "\u25BC") + " " + groupName + " ";
       const groupCountSpan = document.createElement("span");
       groupCountSpan.className = "group-count";
@@ -231,6 +296,25 @@ function render() {
 function createTabRow(tab) {
   const tr = document.createElement("tr");
   if (tab.isDuplicate) tr.className = "duplicate";
+  tr.classList.toggle("selected", selectedTabIds.has(tab.id));
+
+  const selectTd = document.createElement("td");
+  selectTd.className = "col-select";
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.className = "tab-select";
+  checkbox.checked = selectedTabIds.has(tab.id);
+  checkbox.disabled = closingSelected || !isSelectableTab(tab);
+  checkbox.setAttribute("aria-label", `Select ${tab.title || "(untitled)"}`);
+  if (!isSelectableTab(tab)) checkbox.title = "The dashboard is excluded from bulk closing";
+  checkbox.addEventListener("change", () => {
+    if (checkbox.checked) selectedTabIds.add(tab.id);
+    else selectedTabIds.delete(tab.id);
+    tr.classList.toggle("selected", checkbox.checked);
+    updateSelectionControls();
+  });
+  selectTd.appendChild(checkbox);
+  tr.appendChild(selectTd);
 
   const ageClass = tab.ageMs > 86400000 * 90 ? "very-stale"
     : tab.ageMs > 86400000 * 30 ? "stale" : "";
@@ -621,6 +705,11 @@ function updateIgnoredPanel() {
 }
 
 // --- Event listeners ---
+
+document.getElementById("selectFiltered").addEventListener("click", () => selectFilteredTabs(true));
+document.getElementById("clearSelection").addEventListener("click", () => selectFilteredTabs(false));
+document.getElementById("selectAllTabs").addEventListener("change", (e) => selectFilteredTabs(e.target.checked));
+document.getElementById("closeSelected").addEventListener("click", closeSelectedTabs);
 
 // Sort on header click — three-state cycle: desc → asc → off
 // Multiple columns supported; click adds to sort, existing column cycles

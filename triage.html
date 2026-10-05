@@ -91,10 +91,19 @@
       </div>
     </div>
 
+    <div class="control-row bulk-actions">
+      <button id="selectFiltered">Select all filtered tabs</button>
+      <button id="clearSelection" disabled>Clear selection</button>
+      <button id="closeSelected" class="btn-close-selected" disabled>Close selected (0)</button>
+      <span id="selectionStatus" role="status" aria-live="polite">0 tabs selected</span>
+      <span id="bulkError" role="alert"></span>
+    </div>
+
     <div id="table-container">
       <table id="tab-table">
         <thead>
           <tr>
+            <th class="col-select"><input type="checkbox" id="selectAllTabs" aria-label="Select all filtered tabs" title="Select all filtered tabs, including collapsed groups"></th>
             <th data-sort="index" class="sortable col-index">#</th>
             <th data-sort="title" class="sortable col-title">Title</th>
             <th data-sort="domain" class="sortable col-domain">Domain</th>
