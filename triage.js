@@ -886,7 +886,12 @@ document.addEventListener("click", (e) => {
 
 // Fixed row menus must not remain beside a different row after the page moves.
 function closeRowMenus() {
-  document.querySelectorAll(".more-menu.open").forEach((menu) => menu.classList.remove("open"));
+  document.querySelectorAll(".more-menu.open").forEach((menu) => {
+    if (document.activeElement && menu.contains(document.activeElement)) {
+      menu.parentElement.querySelector(".btn-more").focus({ preventScroll: true });
+    }
+    menu.classList.remove("open");
+  });
 }
 
 document.addEventListener("scroll", (event) => {

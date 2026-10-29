@@ -322,6 +322,12 @@ label {
   color: #8aadf4;
 }
 
+/* The enabled border already uses the focus color; keep focus distinct. */
+#fuzzyToggle:focus-visible {
+  outline: 2px solid #8aadf4;
+  outline-offset: 2px;
+}
+
 /* Status toggle buttons (3-state: off / include / exclude) */
 .status-toggle {
   background: transparent;
