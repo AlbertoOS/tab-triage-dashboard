@@ -39,7 +39,6 @@ async function refreshTabs() {
 
 async function runTabAction(message, successMessage) {
   document.getElementById("bulkError").textContent = "";
-  document.getElementById("undo-toast").hidden = true;
   try {
     await sendCommand(message);
     if (successMessage) showUndoToast(successMessage);
@@ -318,6 +317,7 @@ async function closeSelectedTabs() {
   try {
     await sendCommand({ type: "closeTabs", tabIds });
     selectedTabIds.clear();
+    showUndoToast("Selected-tab close request completed.");
   } catch (error) {
     document.getElementById("bulkError").textContent = `Could not close selected tabs: ${error.message}`;
   } finally {

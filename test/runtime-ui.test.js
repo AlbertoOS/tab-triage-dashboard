@@ -101,6 +101,46 @@ for (const [selector, type] of [[".btn-close", "closeTab"], [".btn-goto", "goToT
   });
 }
 
+for (const [selector, type] of [[".btn-goto", "goToTab"], [".btn-discard", "discardTab"],
+  [".btn-close", "closeTab"], [".btn-dedup", "closeTabs"]]) {
+  const outcomes = type === "goToTab" || type === "discardTab" ? ["success", "denied", "rejected"] : ["denied", "rejected"];
+  for (const outcome of outcomes) {
+    it(`preserves existing recovery through ${type} ${outcome}`, async () => {
+      let finishAction;
+      let seeded = false;
+      const app = dashboard((message) => {
+        if (message.type === "getTabs") return { ok: true, tabs: [1, 2].map((id) => (
+          { id, windowId: 1, title: "Example", url: "https://example.com" }
+        )) };
+        if (!seeded) return { ok: true };
+        return new Promise((resolve, reject) => {
+          finishAction = () => outcome === "rejected" ? reject(new Error("Channel closed")) :
+            resolve(outcome === "success" ? { ok: true } : { ok: false, error: "Operation denied" });
+        });
+      });
+      await app.settle();
+      const click = (action) => app.get("tab-body").children[0].querySelector(action)
+        .listeners.click({ stopPropagation() {} });
+      await click(".btn-close");
+      seeded = true;
+      const button = app.get("undo-toast-btn");
+      const message = app.get("undo-toast-msg").textContent;
+      const pending = click(selector);
+      // Test both the pending request and its eventual outcome.
+      const visibleWhilePending = !app.get("undo-toast").hidden;
+      finishAction();
+      await pending;
+      assert.equal(visibleWhilePending, true, "pending actions must not dismiss earlier recovery");
+      assert.equal(app.get("undo-toast").hidden, false);
+      assert.equal(app.get("undo-toast-btn"), button, "do not replace the earlier restore handler");
+      assert.equal(button.disabled, false);
+      assert.equal(app.get("undo-toast-msg").textContent, message);
+      assert.equal(app.messages.filter((entry) => entry.type === "restoreTab").length, 0);
+      if (outcome !== "success") assert.match(app.get("bulkError").textContent, /denied|Channel closed/);
+    });
+  }
+}
+
 it("offers one honest session restore, suppresses overlapping clicks and reports failure", async () => {
   let finishRestore;
   const app = dashboard((message) => message.type === "getTabs" ? { ok: true, tabs: [] } :
@@ -201,6 +241,26 @@ it("keeps recovery available beyond expiry without stealing keyboard focus", asy
   assert.equal(app.messages.filter((message) => message.type === "restoreTab").length, 1);
 });
 
+it("gives every rendered menu action an inset visible keyboard focus outline", async () => {
+  const app = dashboard(() => ({ ok: true, tabs: [
+    { id: 1, title: "Example", url: "https://example.com" },
+  ] }));
+  await app.settle();
+  const menu = app.get("tab-body").children[0].querySelector(".more-menu");
+  assert.deepEqual(menu.children.map((button) => button.className),
+    ["btn-discard", "btn-ignore-url", "btn-ignore-domain"]);
+  for (const button of menu.children) {
+    button.focus();
+    assert.equal(app.run("document.activeElement"), button);
+  }
+  const css = fs.readFileSync(path.join(__dirname, "..", "triage.css"), "utf8");
+  const rule = css.match(/\.more-menu button:focus-visible\s*\{([^}]+)\}/);
+  assert.ok(rule, "borderless menu actions need a focus outline, not only a border-color change");
+  assert.match(rule[1], /outline:\s*2px\s+solid\s+var\(--text\)/);
+  assert.match(rule[1], /outline-offset:\s*-2px/,
+    "keep the ring inside scrollable menu edges rather than clipping it");
+});
+
 it("gives the recovery button a contrasting visible keyboard focus outline", () => {
   const css = fs.readFileSync(path.join(__dirname, "..", "triage.css"), "utf8");
   const rule = css.match(/\.btn-undo:focus-visible\s*\{([^}]+)\}/);
@@ -237,6 +297,78 @@ it("uses a packaged favicon for missing or failed site icons", async () => {
   remote.onerror();
   assert.equal(remote.src, "icons/icon-48.png");
   assert.equal(remote.onerror, null, "fallback failure must not loop");
+});
+
+for (const outcome of ["denied", "rejected", "malformed"]) {
+  for (const priorRecovery of [false, true]) {
+    it(`keeps recovery ${priorRecovery ? "intact" : "hidden"} after partial selected closure ${outcome}`, async () => {
+      let tabs = [1, 2].map((id) => ({ id, title: "Example", url: "https://example.com" }));
+      const app = dashboard((message) => {
+        if (message.type === "getTabs") return { ok: true, tabs };
+        if (message.type === "closeTab") return { ok: true };
+        tabs = tabs.filter((tab) => tab.id === 2);
+        if (outcome === "rejected") throw new Error("Channel closed after partial removal");
+        return outcome === "malformed" ? { ok: "yes" } : { ok: false, error: "Partial removal denied" };
+      });
+      await app.settle();
+      if (priorRecovery) await app.get("tab-body").children[0].querySelector(".btn-close")
+        .listeners.click({ stopPropagation() {} });
+      const button = app.get("undo-toast-btn");
+      const message = app.get("undo-toast-msg").textContent;
+      app.get("selectFiltered").listeners.click();
+      await app.get("closeSelected").listeners.click();
+      assert.equal(app.get("undo-toast").hidden, !priorRecovery);
+      assert.equal(app.get("undo-toast-btn"), button);
+      assert.equal(app.get("undo-toast-msg").textContent, message, "must not announce full success");
+      assert.match(app.get("bulkError").textContent, /denied|Channel closed|response/);
+      assert.deepEqual(Array.from(app.run("selectedTabIds")), [2]);
+      assert.deepEqual(Array.from(app.run("allTabs.map((tab) => tab.id)")), [2]);
+      assert.equal(app.get("closeSelected").disabled, false);
+      assert.equal(app.messages.filter((entry) => entry.type === "restoreTab").length, 0);
+    });
+  }
+}
+
+for (const refreshFails of [false, true]) {
+  it(`replaces earlier recovery after acknowledged selected closure even when refresh ${refreshFails ? "fails" : "succeeds"}`, async () => {
+    let closed = false;
+    const app = dashboard((message) => {
+      if (message.type === "getTabs") {
+        if (closed && refreshFails) return { ok: false, error: "Refresh denied" };
+        return { ok: true, tabs: [{ id: 1, title: "Example", url: "https://example.com" }] };
+      }
+      if (message.type === "closeTabs") closed = true;
+      return { ok: true };
+    });
+    await app.settle();
+    await app.get("tab-body").children[0].querySelector(".btn-close")
+      .listeners.click({ stopPropagation() {} });
+    const previous = app.get("undo-toast-btn");
+    app.get("selectFiltered").listeners.click();
+    await app.get("closeSelected").listeners.click();
+    assert.equal(app.get("undo-toast").hidden, false);
+    assert.notEqual(app.get("undo-toast-btn"), previous);
+    assert.equal(app.get("undo-toast-btn").disabled, false);
+    assert.equal(app.get("undo-toast-msg").textContent, "Selected-tab close request completed.");
+    assert.equal(app.run("selectedTabIds.size"), 0);
+    if (refreshFails) assert.match(app.get("bulkError").textContent, /Refresh denied/);
+  });
+}
+
+it("does not replace earlier recovery when closing an empty selection", async () => {
+  const app = dashboard((message) => message.type === "getTabs" ? { ok: true, tabs: [
+    { id: 1, title: "Example", url: "https://example.com" },
+  ] } : { ok: true });
+  await app.settle();
+  await app.get("tab-body").children[0].querySelector(".btn-close")
+    .listeners.click({ stopPropagation() {} });
+  const button = app.get("undo-toast-btn");
+  const message = app.get("undo-toast-msg").textContent;
+  await app.get("closeSelected").listeners.click();
+  assert.equal(app.get("undo-toast").hidden, false);
+  assert.equal(app.get("undo-toast-btn"), button);
+  assert.equal(app.get("undo-toast-msg").textContent, message);
+  assert.equal(app.messages.filter((entry) => entry.type === "closeTabs").length, 0);
 });
 
 it("preserves both bulk operation and refresh errors without clearing surviving selection", async () => {
