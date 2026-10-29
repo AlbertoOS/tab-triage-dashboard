@@ -5,12 +5,22 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 MANIFEST_FF="$ROOT/manifest.firefox.json"
 MANIFEST_CR="$ROOT/manifest.chrome.json"
 PACKAGE="$ROOT/package.json"
+cd "$ROOT"
+
+# Validation and the version-only release commit must start from the same source.
+# Reject any existing index entries as well, so unrelated staged work cannot ship.
+if ! git diff --quiet || ! git diff --cached --quiet \
+  || [ -n "$(git ls-files --others -- package.json manifest.firefox.json manifest.chrome.json \
+    background.js triage.html triage.js utils.js triage.css icons/)" ]; then
+  echo "Error: release requires clean tracked files, index, and distribution inputs." >&2
+  exit 1
+fi
 
 # --- Read current version from manifest.firefox.json ---
 CURRENT=$(grep '"version"' "$MANIFEST_FF" | head -1 | sed 's/.*"version": *"\([^"]*\)".*/\1/')
 
 # Normalize to semver (e.g. "1.0" -> "1.0.0")
-IFS='.' read -r MAJOR MINOR PATCH <<<"$CURRENT"
+IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
 MAJOR=${MAJOR:-0}
 MINOR=${MINOR:-0}
 PATCH=${PATCH:-0}
@@ -18,38 +28,38 @@ PATCH=${PATCH:-0}
 echo "Current version: $MAJOR.$MINOR.$PATCH"
 
 # --- Determine bump type from conventional commits since last tag ---
-LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+LAST_TAG=$(git describe --tags --abbrev=0 2> /dev/null || echo "")
 
 if [ -n "$LAST_TAG" ]; then
-	COMMITS=$(git log "$LAST_TAG"..HEAD --pretty=format:"%s")
+  COMMITS=$(git log "$LAST_TAG"..HEAD --pretty=format:"%s")
 else
-	COMMITS=$(git log --pretty=format:"%s")
+  COMMITS=$(git log --pretty=format:"%s")
 fi
 
 if [ -z "$COMMITS" ]; then
-	echo "No commits since last release. Nothing to do."
-	exit 0
+  echo "No commits since last release. Nothing to do."
+  exit 0
 fi
 
 BUMP="patch"
 
 while IFS= read -r msg; do
-	# BREAKING CHANGE in footer or ! after type -> major
-	if echo "$msg" | grep -qiE '^[a-z]+(\(.+\))?!:|BREAKING CHANGE'; then
-		BUMP="major"
-		break
-	fi
-	# feat: -> at least minor
-	if echo "$msg" | grep -qE '^feat(\(.+\))?:'; then
-		BUMP="minor"
-	fi
-done <<<"$COMMITS"
+  # BREAKING CHANGE in footer or ! after type -> major
+  if echo "$msg" | grep -qiE '^[a-z]+(\(.+\))?!:|BREAKING CHANGE'; then
+    BUMP="major"
+    break
+  fi
+  # feat: -> at least minor
+  if echo "$msg" | grep -qE '^feat(\(.+\))?:'; then
+    BUMP="minor"
+  fi
+done <<< "$COMMITS"
 
 # --- Compute new version ---
 case "$BUMP" in
-major) NEW_VERSION="$((MAJOR + 1)).0.0" ;;
-minor) NEW_VERSION="$MAJOR.$((MINOR + 1)).0" ;;
-patch) NEW_VERSION="$MAJOR.$MINOR.$((PATCH + 1))" ;;
+  major) NEW_VERSION="$((MAJOR + 1)).0.0" ;;
+  minor) NEW_VERSION="$MAJOR.$((MINOR + 1)).0" ;;
+  patch) NEW_VERSION="$MAJOR.$MINOR.$((PATCH + 1))" ;;
 esac
 
 echo "Bump type: $BUMP"
@@ -59,9 +69,9 @@ echo ""
 # --- Show commits being released ---
 echo "Commits in this release:"
 if [ -n "$LAST_TAG" ]; then
-	git log "$LAST_TAG"..HEAD --pretty=format:"  - %s"
+  git log "$LAST_TAG"..HEAD --pretty=format:"  - %s"
 else
-	git log --pretty=format:"  - %s"
+  git log --pretty=format:"  - %s"
 fi
 echo ""
 echo ""
@@ -69,15 +79,15 @@ echo ""
 # --- Confirm ---
 read -rp "Release v$NEW_VERSION? [y/N] " CONFIRM
 if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
-	echo "Aborted."
-	exit 1
+  echo "Aborted."
+  exit 1
 fi
 
 # --- Update version in manifest files and package.json ---
 sed -i "s/\"version\": *\"$CURRENT\"/\"version\": \"$NEW_VERSION\"/" "$MANIFEST_FF"
 sed -i "s/\"version\": *\"$CURRENT\"/\"version\": \"$NEW_VERSION\"/" "$MANIFEST_CR"
 if grep -q '"version"' "$PACKAGE"; then
-	sed -i "s/\"version\": *\"[^\"]*\"/\"version\": \"$NEW_VERSION\"/" "$PACKAGE"
+  sed -i "s/\"version\": *\"[^\"]*\"/\"version\": \"$NEW_VERSION\"/" "$PACKAGE"
 fi
 
 # --- Lint and test before releasing ---
@@ -87,71 +97,93 @@ npm run lint
 echo "Running tests..."
 npm test
 
-# --- Build zip ---
-echo "Building zip..."
-npm run zip
-
-# --- Commit version bump, tag, and create GitHub release ---
+# --- Commit version bump and tag the exact source used for both assets ---
 git add "$MANIFEST_FF" "$MANIFEST_CR" "$PACKAGE"
 git commit -m "chore: release v$NEW_VERSION"
 git tag -a "v$NEW_VERSION" -m "v$NEW_VERSION"
 
-echo "Pushing tag..."
-git push && git push --tags
-
-ZIP_FF="$ROOT/tab-triage-dashboard-firefox.zip"
-ZIP_CR="$ROOT/tab-triage-dashboard-chrome.zip"
-if command -v gh &>/dev/null && [ -f "$ZIP_FF" ]; then
-	echo "Creating GitHub release..."
-	# Build release notes from commits since last tag (excluding the release commit itself)
-	COMMIT_LOG=""
-	if [ -n "$LAST_TAG" ]; then
-		COMMIT_LOG=$(git log "$LAST_TAG"..HEAD~1 --pretty=format:"%s")
-	else
-		COMMIT_LOG=$(git log HEAD~1 --pretty=format:"%s")
-	fi
-
-	# Categorize commits
-	FEATURES=$(echo "$COMMIT_LOG" | grep -E '^feat(\(.+\))?:' | sed 's/^feat\([^)]*\)\?: //' || true)
-	FIXES=$(echo "$COMMIT_LOG" | grep -E '^fix(\(.+\))?:' | sed 's/^fix\([^)]*\)\?: //' || true)
-	OTHER=$(echo "$COMMIT_LOG" | grep -vE '^(feat|fix)(\(.+\))?:' | grep -vE '^$' || true)
-
-	NOTES="## What's Changed"$'\n'
-	if [ -n "$FEATURES" ]; then
-		NOTES+=$'\n'"### Features"$'\n'
-		while IFS= read -r line; do
-			NOTES+="- $line"$'\n'
-		done <<<"$FEATURES"
-	fi
-	if [ -n "$FIXES" ]; then
-		NOTES+=$'\n'"### Fixes"$'\n'
-		while IFS= read -r line; do
-			NOTES+="- $line"$'\n'
-		done <<<"$FIXES"
-	fi
-	if [ -n "$OTHER" ]; then
-		NOTES+=$'\n'"### Other"$'\n'
-		while IFS= read -r line; do
-			NOTES+="- $line"$'\n'
-		done <<<"$OTHER"
-	fi
-
-	NOTES+=$'\n'"---"$'\n'
-	NOTES+=$'\n'"### All Commits"$'\n'
-	if [ -n "$LAST_TAG" ]; then
-		NOTES+=$(git log "$LAST_TAG"..HEAD~1 --pretty=format:"- %s (%h)")
-	else
-		NOTES+=$(git log HEAD~1 --pretty=format:"- %s (%h)")
-	fi
-
-	gh release create "v$NEW_VERSION" "$ZIP_FF" "$ZIP_CR" \
-		--title "v$NEW_VERSION" \
-		--notes "$NOTES"
-else
-	echo "Skipping GitHub release (gh CLI not found or zip missing)."
+umask 077
+RELEASE_ASSETS=$(mktemp -d "${TMPDIR:-/tmp}/tab-triage-initial-release.XXXXXX")
+trap 'rm -rf -- "$RELEASE_ASSETS"' EXIT
+bash "$ROOT/release-publish.sh" "v$NEW_VERSION" --build-only "$RELEASE_ASSETS"
+PINNED_SOURCE=$(
+  node - "$RELEASE_ASSETS/provenance.json" "v$NEW_VERSION" << 'NODE'
+const fs = require("node:fs");
+try {
+  const { tag, tagObject, commit } = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+  const oid = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+  if (tag !== process.argv[3] || !oid.test(tagObject) || !oid.test(commit)) throw new Error();
+  console.log(`${tagObject} ${commit}`);
+} catch {
+  console.error("Error: invalid release provenance receipt.");
+  process.exit(1);
+}
+NODE
+)
+read -r TAG_OBJECT COMMIT <<< "$PINNED_SOURCE"
+if [ "$(git rev-parse --verify "refs/tags/v$NEW_VERSION")" != "$TAG_OBJECT" ] \
+  || [ "$(git rev-parse --verify "${TAG_OBJECT}^{commit}")" != "$COMMIT" ]; then
+  echo "Error: release tag moved away from the built provenance; refusing publication." >&2
+  exit 1
 fi
 
-git push
+echo "Pushing release..."
+git push --no-follow-tags
+git push --no-follow-tags origin "$TAG_OBJECT:refs/tags/v$NEW_VERSION"
+
+ZIP_FF="$RELEASE_ASSETS/tab-triage-dashboard-firefox.zip"
+ZIP_CR="$RELEASE_ASSETS/tab-triage-dashboard-chrome.zip"
+if command -v gh &> /dev/null && [ -f "$ZIP_FF" ]; then
+  echo "Creating GitHub release..."
+  # Build release notes from commits since last tag (excluding the release commit itself)
+  COMMIT_LOG=""
+  if [ -n "$LAST_TAG" ]; then
+    COMMIT_LOG=$(git log "$LAST_TAG"..HEAD~1 --pretty=format:"%s")
+  else
+    COMMIT_LOG=$(git log HEAD~1 --pretty=format:"%s")
+  fi
+
+  # Categorize commits
+  FEATURES=$(echo "$COMMIT_LOG" | grep -E '^feat(\(.+\))?:' | sed 's/^feat\([^)]*\)\?: //' || true)
+  FIXES=$(echo "$COMMIT_LOG" | grep -E '^fix(\(.+\))?:' | sed 's/^fix\([^)]*\)\?: //' || true)
+  OTHER=$(echo "$COMMIT_LOG" | grep -vE '^(feat|fix)(\(.+\))?:' | grep -vE '^$' || true)
+
+  NOTES="## What's Changed"$'\n'
+  if [ -n "$FEATURES" ]; then
+    NOTES+=$'\n'"### Features"$'\n'
+    while IFS= read -r line; do
+      NOTES+="- $line"$'\n'
+    done <<< "$FEATURES"
+  fi
+  if [ -n "$FIXES" ]; then
+    NOTES+=$'\n'"### Fixes"$'\n'
+    while IFS= read -r line; do
+      NOTES+="- $line"$'\n'
+    done <<< "$FIXES"
+  fi
+  if [ -n "$OTHER" ]; then
+    NOTES+=$'\n'"### Other"$'\n'
+    while IFS= read -r line; do
+      NOTES+="- $line"$'\n'
+    done <<< "$OTHER"
+  fi
+
+  NOTES+=$'\n'"---"$'\n'
+  NOTES+=$'\n'"### All Commits"$'\n'
+  if [ -n "$LAST_TAG" ]; then
+    NOTES+=$(git log "$LAST_TAG"..HEAD~1 --pretty=format:"- %s (%h)")
+  else
+    NOTES+=$(git log HEAD~1 --pretty=format:"- %s (%h)")
+  fi
+
+  gh release create "v$NEW_VERSION" "$ZIP_FF" "$ZIP_CR" \
+    --verify-tag --title "v$NEW_VERSION" \
+    --notes "$NOTES"
+else
+  echo "Skipping GitHub release (gh CLI not found or zip missing)."
+fi
+
+git push --no-follow-tags
 
 echo ""
 echo "Released v$NEW_VERSION."
