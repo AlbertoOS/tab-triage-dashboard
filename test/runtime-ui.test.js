@@ -32,6 +32,7 @@ function dashboard(sendMessage, storage = {}) {
       addEventListener(type, fn) { this.listeners[type] = fn; },
       setAttribute() {},
       focus() { activeElement = this; },
+      contains(child) { return child === this || this.children.some((item) => item.contains(child)); },
       cloneNode() { return Object.assign(element(), { disabled: this.disabled }); },
       replaceWith(next) { for (const [id, value] of elements) if (value === this) elements.set(id, next); },
       querySelector(selector) {
@@ -42,7 +43,10 @@ function dashboard(sendMessage, storage = {}) {
         }
         return null;
       },
-      set innerHTML(value) { this.children = []; },
+      set innerHTML(value) {
+        if (this.contains(activeElement)) activeElement = undefined;
+        this.children = [];
+      },
       set textContent(value) { this.text = value; this.children = []; },
       get textContent() { return this.text || ""; },
     };

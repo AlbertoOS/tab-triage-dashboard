@@ -332,6 +332,13 @@ async function closeSelectedTabs() {
 }
 
 function render() {
+  const tbody = document.getElementById("tab-body");
+  // Capture current focus immediately before rebuilding, not when an async action
+  // starts: a pending (or older) action must never steal newer user focus.
+  const focused = document.activeElement;
+  const focusedRow = Array.from(tbody.children).find((row) => row.contains(focused));
+  const focusSelector = ["tab-select", "btn-goto", "btn-close", "btn-dedup", "btn-more"]
+    .find((name) => (focused?.className || "").split(" ").includes(name));
   const filtered = getFilteredTabs();
   syncSelection(filtered);
   updateSelectionControls(filtered);
@@ -341,7 +348,6 @@ function render() {
   updateStats(filtered.length, enrichedTabs.length);
   updateSortHeaders();
 
-  const tbody = document.getElementById("tab-body");
   tbody.innerHTML = "";
 
   if (groups) {
@@ -378,10 +384,19 @@ function render() {
       tbody.appendChild(createTabRow(tab));
     }
   }
+
+  if (focusedRow) {
+    const row = Array.from(tbody.children).find((item) => item.dataset.tabId === focusedRow.dataset.tabId);
+    const action = focusSelector && row?.querySelector(`.${focusSelector}`);
+    const target = action && !action.disabled ? action : row?.querySelector(".btn-more");
+    // Menu actions are hidden after a rebuild; removed/filtered rows stay gone.
+    (target || document.getElementById("search")).focus({ preventScroll: true });
+  }
 }
 
 function createTabRow(tab) {
   const tr = document.createElement("tr");
+  tr.dataset.tabId = String(tab.id);
   if (tab.isDuplicate) tr.className = "duplicate";
   tr.classList.toggle("selected", selectedTabIds.has(tab.id));
 

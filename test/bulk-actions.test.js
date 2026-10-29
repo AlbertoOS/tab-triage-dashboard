@@ -26,6 +26,7 @@ function createElement() {
       }
       return null;
     },
+    contains(child) { return child === this || this.children.some((item) => item.contains(child)); },
     set innerHTML(value) { this.children = []; },
   };
 }
