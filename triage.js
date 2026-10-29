@@ -624,17 +624,20 @@ function createTabRow(tab) {
     });
     moreMenuEl.classList.toggle("open");
     if (!moreMenuEl.classList.contains("open")) return;
-    // Measure the visible menu, flip above the button if needed, then clamp.
+    // Flip and clamp within the viewport above any visible recovery notice.
     const rect = moreBtnEl.getBoundingClientRect();
     const margin = 8;
+    const toast = document.getElementById("undo-toast");
+    const bottom = toast.hidden ? window.innerHeight - margin
+      : Math.min(window.innerHeight - margin, toast.getBoundingClientRect().top - margin);
     moreMenuEl.style.minWidth = "0px";
     moreMenuEl.style.maxWidth = `${Math.max(0, window.innerWidth - 2 * margin)}px`;
-    moreMenuEl.style.maxHeight = `${Math.max(0, window.innerHeight - 2 * margin)}px`;
+    moreMenuEl.style.maxHeight = `${Math.max(0, bottom - margin)}px`;
     moreMenuEl.style.overflow = "auto";
     const menuRect = moreMenuEl.getBoundingClientRect();
-    const top = rect.bottom + 4 + menuRect.height > window.innerHeight - margin
+    const top = rect.bottom + 4 + menuRect.height > bottom
       ? rect.top - menuRect.height - 4 : rect.bottom + 4;
-    moreMenuEl.style.top = `${Math.max(margin, Math.min(top, window.innerHeight - menuRect.height - margin))}px`;
+    moreMenuEl.style.top = `${Math.max(margin, Math.min(top, bottom - menuRect.height))}px`;
     moreMenuEl.style.left = `${Math.max(margin, Math.min(rect.right - menuRect.width, window.innerWidth - menuRect.width - margin))}px`;
     moreMenuEl.style.transform = "none";
   });
@@ -1030,6 +1033,9 @@ document.addEventListener("keydown", (e) => {
 // --- Most-recent session recovery ---
 
 function updateUndoToastSpace() {
+  // Notification replacement/wrapping can invalidate an already open menu.
+  // Reuse focus-safe dismissal; never move focus from unrelated controls.
+  closeRowMenus();
   const toast = document.getElementById("undo-toast");
   const style = getComputedStyle(toast);
   // Keep the final row above the fixed notice, including wrapped/zoomed layouts.

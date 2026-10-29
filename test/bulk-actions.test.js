@@ -94,6 +94,8 @@ function createDashboard(tabs) {
   vm.runInContext(fs.readFileSync(path.join(__dirname, "../utils.js"), "utf8"), context);
   const source = fs.readFileSync(path.join(__dirname, "../triage.js"), "utf8");
   vm.runInContext(source.split("// --- Event listeners ---")[0], context);
+  vm.runInContext(source.slice(source.indexOf("function closeRowMenus()"),
+    source.indexOf('document.addEventListener("scroll"')), context);
   vm.runInContext(source.slice(source.indexOf("// --- Most-recent session recovery ---"),
     source.indexOf("// --- Init ---")), context);
   vm.runInContext(`
