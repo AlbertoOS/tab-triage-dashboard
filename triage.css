@@ -667,6 +667,11 @@ button:disabled { opacity: 0.45; cursor: default; }
   color: #cad3f5;
 }
 
+.more-menu button:focus-visible {
+  outline: 2px solid #cad3f5;
+  outline-offset: -2px;
+}
+
 .more-menu button:disabled {
   color: #494d64;
   cursor: default;
@@ -829,6 +834,11 @@ button:disabled { opacity: 0.45; cursor: default; }
   font-size: 12px;
   font-family: inherit;
   font-weight: 600;
+}
+
+.btn-undo:focus-visible {
+  outline: 2px solid #cad3f5;
+  outline-offset: 3px;
 }
 
 .btn-undo:hover {
