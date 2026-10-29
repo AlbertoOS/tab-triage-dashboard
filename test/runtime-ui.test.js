@@ -38,6 +38,7 @@ function dashboard(sendMessage, storage = {}) {
   const messages = [];
   const context = vm.createContext({
     URL, console, setTimeout: () => 1, clearTimeout() {},
+    window: { addEventListener() {} },
     chrome: {
       runtime: { getURL: () => "chrome-extension://fixture/triage.html", sendMessage: async (message) => {
         messages.push(message);
