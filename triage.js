@@ -603,12 +603,21 @@ function createTabRow(tab) {
     document.querySelectorAll(".more-menu.open").forEach((m) => {
       if (m !== moreMenuEl) m.classList.remove("open");
     });
-    // Position menu relative to button
-    const rect = moreBtnEl.getBoundingClientRect();
-    moreMenuEl.style.top = `${rect.bottom + 4}px`;
-    moreMenuEl.style.left = `${rect.right}px`;
-    moreMenuEl.style.transform = "translateX(-100%)";
     moreMenuEl.classList.toggle("open");
+    if (!moreMenuEl.classList.contains("open")) return;
+    // Measure the visible menu, flip above the button if needed, then clamp.
+    const rect = moreBtnEl.getBoundingClientRect();
+    const margin = 8;
+    moreMenuEl.style.minWidth = "0px";
+    moreMenuEl.style.maxWidth = `${Math.max(0, window.innerWidth - 2 * margin)}px`;
+    moreMenuEl.style.maxHeight = `${Math.max(0, window.innerHeight - 2 * margin)}px`;
+    moreMenuEl.style.overflow = "auto";
+    const menuRect = moreMenuEl.getBoundingClientRect();
+    const top = rect.bottom + 4 + menuRect.height > window.innerHeight - margin
+      ? rect.top - menuRect.height - 4 : rect.bottom + 4;
+    moreMenuEl.style.top = `${Math.max(margin, Math.min(top, window.innerHeight - menuRect.height - margin))}px`;
+    moreMenuEl.style.left = `${Math.max(margin, Math.min(rect.right - menuRect.width, window.innerWidth - menuRect.width - margin))}px`;
+    moreMenuEl.style.transform = "none";
   });
 
   return tr;
@@ -721,7 +730,7 @@ async function saveIgnoreLists() {
 }
 
 async function ignoreUrl(url) {
-  const norm = normalizeUrl(url);
+  const norm = normalizeIgnoredUrl(url);
   if (!norm) return;
   ignoredUrls.add(norm);
   await saveIgnoreLists();
@@ -761,7 +770,7 @@ async function resetAllIgnored() {
 
 function isIgnored(tab) {
   if (ignoredDomains.has(tab.domain)) return true;
-  if (ignoredUrls.has(normalizeUrl(tab.url || ""))) return true;
+  if (ignoredUrls.has(normalizeIgnoredUrl(tab.url || ""))) return true;
   return false;
 }
 
