@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-**Tab Triage Dashboard** is a Firefox WebExtension (Manifest V2) for managing and triaging large numbers of browser tabs (1000+). It opens a full-page tab manager with sorting, filtering, grouping, and search.
+**Tab Triage Dashboard** is a Manifest V3 WebExtension for Firefox and Chrome that manages and triages large numbers of browser tabs (1000+). It opens a full-page tab manager with sorting, filtering, clustering, grouping, and search.
 
 ## Architecture
 
@@ -11,7 +11,8 @@ background.js        → Minimal message broker (open triage page, tab CRUD)
 triage.html          → Single-page UI shell
 triage.js            → All frontend logic (~850 lines, single file)
 triage.css           → Catppuccin Macchiato dark theme (~720 lines)
-manifest.json        → Manifest V2, Firefox-only (browser.* APIs)
+manifest.firefox.json → Firefox Manifest V3 configuration
+manifest.chrome.json  → Chrome Manifest V3 configuration
 icons/icon.svg       → Extension icon
 release.sh           → Release script (version bump, tag, publish)
 release-publish.sh   → Standalone GitHub release publisher
@@ -23,23 +24,23 @@ release-publish.sh   → Standalone GitHub release publisher
 
 ### Communication
 
-Background script and triage page communicate via `browser.runtime.sendMessage`. Message types: `getTabs`, `goToTab`, `closeTab`, `closeTabs`.
+Background script and triage page communicate through `api.runtime.sendMessage`, where `api` resolves to Firefox's `browser` or Chrome's `chrome`. Message types include `getTabs`, `goToTab`, `closeTab`, `closeTabs`, `discardTab`, and session restoration commands.
 
 ### State
 
-All state is module-level variables in `triage.js`: `allTabs`, `enrichedTabs`, `currentSort`, `collapsedGroups`, `ignoredUrls`, `ignoredDomains`, `showIgnored`. Persistence uses `browser.storage.local` for ignore lists and favicon size.
+All state is module-level variables in `triage.js`: `allTabs`, `enrichedTabs`, `currentSort`, `collapsedGroups`, `ignoredUrls`, `ignoredDomains`, `showIgnored`, and `fuzzySearch`. Persistence uses extension local storage for ignore lists and favicon size.
 
 ## Tech Stack
 
 - **Vanilla JavaScript** — no frameworks, no dependencies, no build step
-- **Firefox WebExtension API** (Manifest V2) — `browser.*` namespace only, not Chrome-compatible
+- **Firefox and Chrome WebExtension APIs** (Manifest V3) — the shared `api` alias resolves to `browser.*` or `chrome.*`
 - **Plain CSS** with CSS custom properties
 - **No bundler, no transpiler** — source files are the distribution
 - **addons-linter** — Mozilla's extension validator, run via `npm run lint`
 
 ## Build & Packaging
 
-Source files are the distribution files directly. Package with `npm run zip` which creates `tab-triage-dashboard.zip` containing only extension source files. The `.gitignore` excludes `*.xpi`, `*.zip`, `web-ext-artifacts/`, and `node_modules/`.
+Source files are the distribution files directly. Package with `npm run zip` which creates Firefox and Chrome archives containing only extension source files. The `.gitignore` excludes `*.xpi`, `*.zip`, `web-ext-artifacts/`, `node_modules/`, generated `manifest.json`, and the local `TODO.md` backlog.
 
 ## Linting
 
@@ -84,6 +85,8 @@ Run `npm run lint` to validate the extension with Mozilla's [addons-linter](http
 ### Git
 - Conventional Commits: `type: description` (e.g., `feat:`, `fix:`, `docs:`)
 - Imperative mood in commit messages
+- Develop each feature or fix on a dedicated topic branch (`feat/`, `fix/`, `docs/`, etc.); do not develop feature work directly on `main`.
+- Open a scoped, verified pull request targeting `main` for every feature or fix.
 
 ## Key Files
 
@@ -93,7 +96,7 @@ Run `npm run lint` to validate the extension with Mozilla's [addons-linter](http
 | `triage.js` | All UI: data loading, enrichment, filtering, sorting, grouping, rendering, event handling |
 | `triage.css` | Full styling with Catppuccin Macchiato palette |
 | `triage.html` | Page structure: toolbar, filters, table, stats bar, panels |
-| `manifest.json` | Extension metadata, permissions (`tabs`, `storage`, `<all_urls>`) |
+| `manifest.firefox.json`, `manifest.chrome.json` | Browser-specific extension metadata and permissions |
 | `release.sh` | Full release automation script |
 | `release-publish.sh` | Standalone GitHub release publisher |
 | `AMO_LISTING.md` | Reference for Firefox Add-ons submission form |
