@@ -44,7 +44,7 @@ function fixture(t) {
   const bin = path.join(dir, "bin"); fs.mkdirSync(bin);
   const log = path.join(dir, "mutations.jsonl");
   // Read-only Git is real; every mutation/network boundary is trapped, never forwarded.
-  const stub = `#!${process.execPath}\nconst fs=require('node:fs');const cp=require('node:child_process');const path=require('node:path');const args=process.argv.slice(2);const name=path.basename(process.argv[1]);\nif(name==='git' && ['describe','rev-parse','rev-list','log','archive','show','ls-tree','check-ref-format','status','diff'].includes(args[0])) {const r=cp.spawnSync(${JSON.stringify(realGit)},args,{stdio:'inherit'});process.exit(r.status ?? 1);}\nfs.appendFileSync(process.env.MUTATION_LOG,JSON.stringify([name,...args])+'\\n');\nif(name==='git' && args[0]==='push')process.exit(Number(process.env.PUSH_STATUS||0));\nif(name==='gh' && args[0]==='release' && args[1]==='view')process.exit(Number(process.env.RELEASE_VIEW_STATUS||1));\nif(name==='gh' && ['create','upload'].includes(args[1])){fs.mkdirSync(process.env.CAPTURE,{recursive:true});for(const a of args)if(a.endsWith('.zip'))fs.copyFileSync(a,path.join(process.env.CAPTURE,path.basename(a)));}\nif(name==='npm')process.exit(0);\nif(name==='git' && ['add','commit','tag'].includes(args[0])) {const r=cp.spawnSync(${JSON.stringify(realGit)},['-c','core.hooksPath=/dev/null','-c','commit.gpgsign=false','-c','tag.gpgsign=false',...args],{stdio:'inherit'});process.exit(r.status ?? 1);}\nif(name==='gh')process.exit(0);\nprocess.exit(97);\n`;
+  const stub = `#!${process.execPath}\nconst fs=require('node:fs');const cp=require('node:child_process');const path=require('node:path');const args=process.argv.slice(2);const name=path.basename(process.argv[1]);\nif(name==='git' && ['describe','rev-parse','rev-list','log','archive','show','ls-tree','check-ref-format','status','diff','ls-files'].includes(args[0])) {const r=cp.spawnSync(${JSON.stringify(realGit)},args,{stdio:'inherit'});process.exit(r.status ?? 1);}\nfs.appendFileSync(process.env.MUTATION_LOG,JSON.stringify([name,...args])+'\\n');\nif(name==='git' && args[0]==='push')process.exit(Number(process.env.PUSH_STATUS||0));\nif(name==='gh' && args[0]==='release' && args[1]==='view')process.exit(Number(process.env.RELEASE_VIEW_STATUS||1));\nif(name==='gh' && ['create','upload'].includes(args[1])){fs.mkdirSync(process.env.CAPTURE,{recursive:true});for(const a of args)if(a.endsWith('.zip'))fs.copyFileSync(a,path.join(process.env.CAPTURE,path.basename(a)));}\nif(name==='npm')process.exit(0);\nif(name==='git' && ['add','commit','tag'].includes(args[0])) {const r=cp.spawnSync(${JSON.stringify(realGit)},['-c','core.hooksPath=/dev/null','-c','commit.gpgsign=false','-c','tag.gpgsign=false',...args],{stdio:'inherit'});process.exit(r.status ?? 1);}\nif(name==='gh')process.exit(0);\nprocess.exit(97);\n`;
   for (const name of ["git", "gh", "npm"]) fs.writeFileSync(path.join(bin, name), stub, { mode: 0o755 });
   Object.assign(env, { PATH: `${bin}:${process.env.PATH}`, MUTATION_LOG: log, CAPTURE: path.join(dir, "capture") });
   return { dir, env, git, calls: () => fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map(JSON.parse) : [] };
@@ -110,6 +110,32 @@ for (const variant of ["symlink", "export-subst"]) {
   });
 }
 
+for (const variant of ["unstaged distribution", "staged distribution", "untracked distribution", "staged unrelated"]) {
+  test(`normal release rejects ${variant} before any modification or validation`, (t) => {
+    const f = fixture(t);
+    fs.writeFileSync(path.join(f.dir, "triage.js"), "// committed candidate\n");
+    f.git("add", "triage.js"); f.git("commit", "-qm", "fix: candidate payload");
+    const dirty = variant === "untracked distribution" ? "icons/new.svg"
+      : variant === "staged unrelated" ? "notes.txt" : "utils.js";
+    fs.writeFileSync(path.join(f.dir, dirty), "dirty input\n");
+    if (variant.startsWith("staged")) f.git("add", dirty);
+    const before = {
+      head: f.git("rev-parse", "HEAD"), status: f.git("status", "--porcelain"),
+      index: f.git("diff", "--cached"),
+      versions: ["package.json", "manifest.firefox.json", "manifest.chrome.json"].map((file) => fs.readFileSync(path.join(f.dir, file), "utf8")),
+    };
+    const result = run("bash", ["release.sh"], f.dir, f.env, "y\n");
+    assert.notEqual(result.status, 0, "dirty release inputs must fail");
+    assert.match(result.stderr, /clean|dirty/i);
+    assert.deepEqual(f.calls(), [], "no validation, staging, commit, tag or publication may run");
+    assert.equal(f.git("rev-parse", "HEAD"), before.head);
+    assert.equal(f.git("status", "--porcelain"), before.status);
+    assert.equal(f.git("diff", "--cached"), before.index);
+    assert.deepEqual(["package.json", "manifest.firefox.json", "manifest.chrome.json"].map((file) => fs.readFileSync(path.join(f.dir, file), "utf8")), before.versions);
+    assert.equal(fs.readFileSync(path.join(f.dir, dirty), "utf8"), "dirty input\n");
+  });
+}
+
 test("normal release attaches both freshly built tagged payloads and pushes only its selected tag", (t) => {
   const f = fixture(t);
   fs.writeFileSync(path.join(f.dir, "triage.js"), "// release candidate\n");
@@ -122,6 +148,39 @@ test("normal release attaches both freshly built tagged payloads and pushes only
   assert.ok(pushes.every((call) => call.includes("--no-follow-tags") && !call.includes("--tags")));
   assert.ok(pushes.some((call) => call.at(-1) === `${f.git("rev-parse", "refs/tags/v1.3.3")}:refs/tags/v1.3.3`));
 });
+
+for (const movement of ["commit", "tag object only"]) {
+  test(`normal release rejects ${movement} movement after build-only before any publication`, (t) => {
+    const f = fixture(t);
+    fs.writeFileSync(path.join(f.dir, "triage.js"), "// release candidate\n");
+    f.git("add", "triage.js"); f.git("commit", "-qm", "fix: candidate payload");
+    // Interpose at the real build-only subprocess return, not a timing window.
+    const stub = `#!${process.execPath}
+const fs = require("node:fs");
+const cp = require("node:child_process");
+const path = require("node:path");
+const args = process.argv.slice(2);
+const result = cp.spawnSync("/usr/bin/bash", args, { stdio: "inherit" });
+if (result.status !== 0) process.exit(result.status ?? 1);
+if (path.basename(args[0]) === "release-publish.sh" && args[2] === "--build-only") {
+  fs.copyFileSync(path.join(args[3], "provenance.json"), "built-receipt.json");
+  const target = ${JSON.stringify(movement)} === "commit" ? "HEAD~1" : "HEAD";
+  const moved = cp.spawnSync(${JSON.stringify(realGit)}, ["-c", "core.hooksPath=/dev/null", "-c", "tag.gpgsign=false", "tag", "-f", "-a", args[1], target, "-m", "deterministic movement"], { stdio: "inherit" });
+  if (moved.status !== 0) process.exit(moved.status ?? 1);
+}
+`;
+    fs.writeFileSync(path.join(f.dir, "bin/bash"), stub, { mode: 0o755 });
+    const result = run("bash", ["release.sh"], f.dir, f.env, "y\n");
+    const receipt = JSON.parse(fs.readFileSync(path.join(f.dir, "built-receipt.json"), "utf8"));
+    assert.notEqual(f.git("rev-parse", "refs/tags/v1.3.3"), receipt.tagObject, "fixture must move the built tag");
+    if (movement === "tag object only") assert.equal(f.git("rev-parse", "v1.3.3^{commit}"), receipt.commit);
+    else assert.notEqual(f.git("rev-parse", "v1.3.3^{commit}"), receipt.commit);
+    assert.notEqual(result.status, 0, "moved tag must fail instead of publishing mismatched assets");
+    assert.match(result.stderr, /tag|provenance/i);
+    assert.deepEqual(f.calls().filter((call) => call[0] === "gh" || (call[0] === "git" && call[1] === "push")), []);
+    assert.deepEqual(fs.readdirSync(f.dir).filter((name) => name.startsWith("tab-triage-initial-release.") || name.startsWith("tab-triage-release.")), []);
+  });
+}
 
 test("tag push failure is fatal before any gh operation and cleans private scratch", (t) => {
   const f = fixture(t);
@@ -138,6 +197,14 @@ test("legacy no-argument publishing safely rebuilds both assets for an existing 
   checkBoth(f.env.CAPTURE, "1.3.2");
   assert.ok(f.calls().some((call) => call[0] === "gh" && call[2] === "upload" && call[3] === "v1.3.2"));
   assert.equal(f.calls().filter((call) => call[0] === "npm").length, 0);
+});
+
+test("explicitly empty release tag rejects instead of selecting the nearest tag", (t) => {
+  const f = fixture(t);
+  const result = run("bash", ["release-publish.sh", ""], f.dir, f.env);
+  assert.notEqual(result.status, 0, "explicit empty selection must not publish the fallback tag");
+  assert.match(result.stderr, /select an existing release tag/i);
+  assert.deepEqual(f.calls(), []);
 });
 
 test("missing selected tags fail without mutations", (t) => {

@@ -5,6 +5,16 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 MANIFEST_FF="$ROOT/manifest.firefox.json"
 MANIFEST_CR="$ROOT/manifest.chrome.json"
 PACKAGE="$ROOT/package.json"
+cd "$ROOT"
+
+# Validation and the version-only release commit must start from the same source.
+# Reject any existing index entries as well, so unrelated staged work cannot ship.
+if ! git diff --quiet || ! git diff --cached --quiet \
+  || [ -n "$(git ls-files --others -- package.json manifest.firefox.json manifest.chrome.json \
+    background.js triage.html triage.js utils.js triage.css icons/)" ]; then
+  echo "Error: release requires clean tracked files, index, and distribution inputs." >&2
+  exit 1
+fi
 
 # --- Read current version from manifest.firefox.json ---
 CURRENT=$(grep '"version"' "$MANIFEST_FF" | head -1 | sed 's/.*"version": *"\([^"]*\)".*/\1/')
@@ -96,7 +106,26 @@ umask 077
 RELEASE_ASSETS=$(mktemp -d "${TMPDIR:-/tmp}/tab-triage-initial-release.XXXXXX")
 trap 'rm -rf -- "$RELEASE_ASSETS"' EXIT
 bash "$ROOT/release-publish.sh" "v$NEW_VERSION" --build-only "$RELEASE_ASSETS"
-TAG_OBJECT=$(git rev-parse --verify "refs/tags/v$NEW_VERSION")
+PINNED_SOURCE=$(
+  node - "$RELEASE_ASSETS/provenance.json" "v$NEW_VERSION" << 'NODE'
+const fs = require("node:fs");
+try {
+  const { tag, tagObject, commit } = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+  const oid = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+  if (tag !== process.argv[3] || !oid.test(tagObject) || !oid.test(commit)) throw new Error();
+  console.log(`${tagObject} ${commit}`);
+} catch {
+  console.error("Error: invalid release provenance receipt.");
+  process.exit(1);
+}
+NODE
+)
+read -r TAG_OBJECT COMMIT <<< "$PINNED_SOURCE"
+if [ "$(git rev-parse --verify "refs/tags/v$NEW_VERSION")" != "$TAG_OBJECT" ] \
+  || [ "$(git rev-parse --verify "${TAG_OBJECT}^{commit}")" != "$COMMIT" ]; then
+  echo "Error: release tag moved away from the built provenance; refusing publication." >&2
+  exit 1
+fi
 
 echo "Pushing release..."
 git push --no-follow-tags

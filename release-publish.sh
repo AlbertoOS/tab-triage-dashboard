@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
 # Legacy no-argument publishing remains supported; explicit selection is preferred.
-TAG="${1:-$(git describe --tags --abbrev=0 2> /dev/null || true)}"
+TAG="${1-$(git describe --tags --abbrev=0 2> /dev/null || true)}"
 BUILD_ONLY=""
 if [ "$#" -gt 1 ]; then
   if [ "$#" -ne 3 ] || [ "$2" != "--build-only" ]; then
