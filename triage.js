@@ -664,6 +664,7 @@ function updateSortHeaders() {
 }
 
 function populateDomainFilter() {
+  const selectedDomains = new Set(getSelectedDomains());
   const domainCounts = {};
   for (const tab of enrichedTabs) {
     if (tab.domain) {
@@ -681,6 +682,7 @@ function populateDomainFilter() {
     checkbox.type = "checkbox";
     checkbox.name = "filterDomain";
     checkbox.value = domain;
+    checkbox.checked = selectedDomains.has(domain);
     label.appendChild(checkbox);
     const nameSpan = document.createElement("span");
     nameSpan.textContent = domain;
@@ -1032,24 +1034,37 @@ function showUndoToast(message) {
   toast.hidden = false;
   msgEl.textContent = message;
 
-  // Replace button to clear old listeners
+  // Replace button to clear old listeners, preserving only its current focus.
+  const hadFocus = document.activeElement === btn;
   const newBtn = btn.cloneNode(true);
   newBtn.disabled = false;
+  newBtn.setAttribute("aria-disabled", "false");
   btn.replaceWith(newBtn);
+  if (hadFocus) newBtn.focus({ preventScroll: true });
   newBtn.textContent = "Restore most recently closed tab/window";
   newBtn.title = "The browser chooses the session; this is not an undo of this batch.";
 
+  let restoring = false;
   newBtn.addEventListener("click", async () => {
-    if (newBtn.disabled) return;
-    newBtn.disabled = true;
+    if (restoring) return;
+    restoring = true;
+    // Native disabled can blur a focused button before the request settles.
+    newBtn.setAttribute("aria-disabled", "true");
     document.getElementById("bulkError").textContent = "";
     try {
       await sendCommand({ type: "restoreTab" });
-      if (document.getElementById("undo-toast-btn") === newBtn) toast.hidden = true;
+      if (document.getElementById("undo-toast-btn") === newBtn) {
+        if (document.activeElement === newBtn) {
+          document.getElementById("search").focus({ preventScroll: true });
+        }
+        toast.hidden = true;
+        newBtn.disabled = true;
+      }
     } catch (error) {
       if (document.getElementById("undo-toast-btn") === newBtn) {
         reportError(`Could not restore most recent session: ${error.message}`);
-        newBtn.disabled = false;
+        restoring = false;
+        newBtn.setAttribute("aria-disabled", "false");
       }
     } finally {
       try {

@@ -30,11 +30,21 @@ function dashboard(sendMessage, storage = {}) {
       classList: { toggle() {}, add() {}, remove() {} },
       appendChild(child) { this.children.push(child); child.parent = this; return child; },
       addEventListener(type, fn) { this.listeners[type] = fn; },
-      setAttribute() {},
-      focus() { activeElement = this; },
+      attributes: {},
+      setAttribute(name, value) { this.attributes[name] = String(value); },
+      getAttribute(name) { return this.attributes[name] ?? null; },
+      set disabled(value) {
+        this.isDisabled = value;
+        if (value && activeElement === this) activeElement = undefined;
+      },
+      get disabled() { return this.isDisabled || false; },
+      focus() { if (!this.disabled) activeElement = this; },
       contains(child) { return child === this || this.children.some((item) => item.contains(child)); },
       cloneNode() { return Object.assign(element(), { disabled: this.disabled }); },
-      replaceWith(next) { for (const [id, value] of elements) if (value === this) elements.set(id, next); },
+      replaceWith(next) {
+        if (this.contains(activeElement)) activeElement = undefined;
+        for (const [id, value] of elements) if (value === this) elements.set(id, next);
+      },
       querySelector(selector) {
         for (const child of this.children) {
           if (child.tag === selector || (child.className || "").split(" ").includes(selector.slice(1))) return child;
@@ -73,7 +83,14 @@ function dashboard(sendMessage, storage = {}) {
       storage: { local: { get: async () => ({}), set: async () => {}, ...storage } },
     },
     document: { get activeElement() { return activeElement; },
-      getElementById: get, createElement: element, querySelectorAll: () => [],
+      getElementById: get, createElement: element,
+      querySelectorAll: (selector) => {
+        if (selector === 'input[name="filterDomain"]' || selector === 'input[name="filterDomain"]:checked') {
+          return get("domainList").children.map((label) => label.querySelector("input"))
+            .filter((input) => !selector.endsWith(":checked") || input.checked);
+        }
+        return [];
+      },
       querySelector: get, addEventListener() {}, documentElement: element() },
   });
   for (const file of ["utils.js", "triage.js"]) {

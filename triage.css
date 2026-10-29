@@ -853,6 +853,7 @@ button:disabled { opacity: 0.45; cursor: default; }
   font-weight: 600;
 }
 
+.btn-undo[aria-disabled="true"],
 .btn-undo:disabled {
   opacity: 1;
   cursor: wait;
