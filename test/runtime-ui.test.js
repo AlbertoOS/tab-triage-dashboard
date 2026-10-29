@@ -7,6 +7,22 @@ const path = require("node:path");
 // Only browser/DOM boundaries are mocked; execute the complete dashboard source.
 function dashboard(sendMessage, storage = {}) {
   const elements = new Map();
+  const timers = new Map();
+  let now = 0;
+  let timerId = 0;
+  let activeElement;
+  function advanceTime(ms) {
+    const end = now + ms;
+    while (true) {
+      const next = [...timers].filter(([, timer]) => timer.at <= end)
+        .sort((a, b) => a[1].at - b[1].at)[0];
+      if (!next) break;
+      now = next[1].at;
+      timers.delete(next[0]);
+      next[1].callback();
+    }
+    now = end;
+  }
   function element(tag) {
     return {
       tag,
@@ -15,6 +31,7 @@ function dashboard(sendMessage, storage = {}) {
       appendChild(child) { this.children.push(child); child.parent = this; return child; },
       addEventListener(type, fn) { this.listeners[type] = fn; },
       setAttribute() {},
+      focus() { activeElement = this; },
       cloneNode() { return Object.assign(element(), { disabled: this.disabled }); },
       replaceWith(next) { for (const [id, value] of elements) if (value === this) elements.set(id, next); },
       querySelector(selector) {
@@ -37,7 +54,12 @@ function dashboard(sendMessage, storage = {}) {
   get("groupBy").value = "none";
   const messages = [];
   const context = vm.createContext({
-    URL, console, setTimeout: () => 1, clearTimeout() {},
+    URL, console,
+    setTimeout(callback, delay = 0) {
+      timers.set(++timerId, { callback, at: now + delay });
+      return timerId;
+    },
+    clearTimeout(id) { timers.delete(id); },
     window: { addEventListener() {} },
     chrome: {
       runtime: { getURL: () => "chrome-extension://fixture/triage.html", sendMessage: async (message) => {
@@ -46,13 +68,14 @@ function dashboard(sendMessage, storage = {}) {
       } },
       storage: { local: { get: async () => ({}), set: async () => {}, ...storage } },
     },
-    document: { getElementById: get, createElement: element, querySelectorAll: () => [],
+    document: { get activeElement() { return activeElement; },
+      getElementById: get, createElement: element, querySelectorAll: () => [],
       querySelector: get, addEventListener() {}, documentElement: element() },
   });
   for (const file of ["utils.js", "triage.js"]) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, "..", file), "utf8"), context);
   }
-  return { get, messages, run: (code) => vm.runInContext(code, context),
+  return { get, messages, advanceTime, run: (code) => vm.runInContext(code, context),
     settle: () => new Promise(setImmediate) };
 }
 
@@ -97,6 +120,12 @@ it("offers one honest session restore, suppresses overlapping clicks and reports
   assert.match(app.get("bulkError").textContent, /Nothing to restore/);
   assert.equal(app.get("undo-toast").hidden, false);
   assert.equal(button.disabled, false);
+  const retry = button.listeners.click();
+  assert.equal(app.messages.filter((message) => message.type === "restoreTab").length, 2);
+  finishRestore({ ok: true });
+  await retry;
+  assert.equal(app.get("bulkError").textContent, "");
+  assert.equal(app.get("undo-toast").hidden, true);
 });
 
 it("allows one new explicit restore after each new close notification", async () => {
@@ -109,6 +138,89 @@ it("allows one new explicit restore after each new close notification", async ()
     assert.equal(app.get("undo-toast").hidden, true);
   }
   assert.equal(app.messages.filter((message) => message.type === "restoreTab").length, 2);
+});
+
+for (const outcome of ["succeeds", "fails", "refresh fails"]) {
+  it(`keeps a newer close notification unchanged when an older restore ${outcome}`, async () => {
+    let finishRestore;
+    let finished = false;
+    const app = dashboard((message) => {
+      if (message.type === "getTabs") {
+        if (finished && outcome === "refresh fails") return { ok: false, error: "Old refresh denied" };
+        return { ok: true, tabs: [
+          { id: 1, title: "Example", url: "https://example.com" },
+        ] };
+      }
+      if (message.type === "restoreTab") return new Promise((resolve) => { finishRestore = resolve; });
+      return { ok: true };
+    });
+    await app.settle();
+    const close = () => app.get("tab-body").children[0].querySelector(".btn-close")
+      .listeners.click({ stopPropagation() {} });
+    await close();
+    const oldButton = app.get("undo-toast-btn");
+    const restoring = oldButton.listeners.click();
+    await close();
+    const currentButton = app.get("undo-toast-btn");
+    const message = app.get("undo-toast-msg").textContent;
+    assert.notEqual(currentButton, oldButton);
+    finished = true;
+    finishRestore(outcome === "fails" ? { ok: false, error: "Old restore denied" } : { ok: true });
+    await restoring;
+    assert.equal(app.get("undo-toast").hidden, false);
+    assert.equal(app.get("undo-toast-btn"), currentButton);
+    assert.equal(currentButton.disabled, false);
+    assert.equal(app.get("undo-toast-msg").textContent, message);
+    assert.equal(app.get("bulkError").textContent, "");
+  });
+}
+
+it("keeps recovery available beyond expiry without stealing keyboard focus", async () => {
+  const app = dashboard((message) => message.type === "getTabs" ? { ok: true, tabs: [
+    { id: 1, title: "Example", url: "https://example.com" },
+  ] } : { ok: true });
+  await app.settle();
+  app.get("search").focus();
+  await app.get("tab-body").children[0].querySelector(".btn-close")
+    .listeners.click({ stopPropagation() {} });
+  const button = app.get("undo-toast-btn");
+  assert.equal(app.run("document.activeElement"), app.get("search"));
+  // Prove the fixture executes due callbacks rather than silently ignoring timers.
+  app.run('setTimeout(() => { document.getElementById("timer-probe").textContent = "fired"; }, 5000)');
+  app.advanceTime(5001);
+  assert.equal(app.get("timer-probe").textContent, "fired");
+  assert.equal(app.get("undo-toast").hidden, false);
+  button.focus();
+  app.advanceTime(60000);
+  assert.equal(app.run("document.activeElement"), button);
+  assert.equal(app.get("undo-toast").hidden, false);
+  assert.equal(button.disabled, false);
+  assert.equal(app.messages.filter((message) => message.type === "restoreTab").length, 0);
+  await button.listeners.click();
+  assert.equal(app.get("undo-toast").hidden, true);
+  assert.equal(app.messages.filter((message) => message.type === "restoreTab").length, 1);
+});
+
+it("gives the recovery button a contrasting visible keyboard focus outline", () => {
+  const css = fs.readFileSync(path.join(__dirname, "..", "triage.css"), "utf8");
+  const rule = css.match(/\.btn-undo:focus-visible\s*\{([^}]+)\}/);
+  assert.ok(rule, "recovery needs its own focus-visible rule because its border is removed");
+  const outline = rule[1].match(/outline:\s*(\d+)px\s+solid\s+var\((--[\w-]+)\)/);
+  assert.ok(outline, "focus must have a solid, nonzero outline");
+  assert.ok(Number(outline[1]) >= 2);
+  assert.match(rule[1], /outline-offset:\s*[2-9]\d*px/);
+  function luminance(variable) {
+    const hex = css.match(new RegExp(`${variable}:\\s*(#[0-9a-f]{6})`, "i"))[1];
+    const channels = hex.slice(1).match(/../g).map((value) => {
+      const channel = parseInt(value, 16) / 255;
+      return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    });
+    return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+  }
+  const ring = luminance(outline[2]);
+  const surround = luminance("--surface1");
+  assert.ok((Math.max(ring, surround) + 0.05) / (Math.min(ring, surround) + 0.05) >= 3,
+    "focus ring must contrast at least 3:1 with the toast surface");
 });
 
 it("uses a packaged favicon for missing or failed site icons", async () => {

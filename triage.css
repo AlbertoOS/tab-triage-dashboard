@@ -830,6 +830,11 @@ button:disabled { opacity: 0.45; cursor: default; }
   font-weight: 600;
 }
 
+.btn-undo:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 3px;
+}
+
 .btn-undo:hover {
   filter: brightness(1.15);
 }

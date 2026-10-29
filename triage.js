@@ -1003,14 +1003,12 @@ document.addEventListener("keydown", (e) => {
 });
 
 // --- Most-recent session recovery ---
-let undoTimer = null;
 
 function showUndoToast(message) {
   const toast = document.getElementById("undo-toast");
   const msgEl = document.getElementById("undo-toast-msg");
   const btn = document.getElementById("undo-toast-btn");
 
-  clearTimeout(undoTimer);
   toast.hidden = false;
   msgEl.textContent = message;
 
@@ -1024,26 +1022,25 @@ function showUndoToast(message) {
   newBtn.addEventListener("click", async () => {
     if (newBtn.disabled) return;
     newBtn.disabled = true;
-    clearTimeout(undoTimer);
     document.getElementById("bulkError").textContent = "";
     try {
       await sendCommand({ type: "restoreTab" });
-      toast.hidden = true;
+      if (document.getElementById("undo-toast-btn") === newBtn) toast.hidden = true;
     } catch (error) {
-      reportError(`Could not restore most recent session: ${error.message}`);
-      newBtn.disabled = false;
+      if (document.getElementById("undo-toast-btn") === newBtn) {
+        reportError(`Could not restore most recent session: ${error.message}`);
+        newBtn.disabled = false;
+      }
     } finally {
       try {
         await loadTabs();
       } catch (error) {
-        reportError(`Could not refresh tabs: ${error.message}`);
+        if (document.getElementById("undo-toast-btn") === newBtn) {
+          reportError(`Could not refresh tabs: ${error.message}`);
+        }
       }
     }
   });
-
-  undoTimer = setTimeout(() => {
-    toast.hidden = true;
-  }, 5000);
 }
 
 // --- Init ---
