@@ -39,7 +39,7 @@ api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const requestedIds = new Set(msg.tabIds);
         const tabIds = tabs
           .filter((tab) => requestedIds.has(tab.id) &&
-            (tab.url || "").split(/[?#]/)[0] !== dashboardUrl)
+            ![tab.url, tab.pendingUrl].some((url) => (url || "").split(/[?#]/)[0] === dashboardUrl))
           .map((tab) => tab.id);
         if (tabIds.length > 0) await api.tabs.remove(tabIds);
         break;

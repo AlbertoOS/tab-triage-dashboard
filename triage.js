@@ -229,7 +229,8 @@ function groupTabs(tabs) {
 // --- Rendering ---
 
 function isSelectableTab(tab) {
-  return (tab.url || "").split(/[?#]/)[0] !== api.runtime.getURL("triage.html");
+  return ![tab.url, tab.pendingUrl].some((url) =>
+    (url || "").split(/[?#]/)[0] === api.runtime.getURL("triage.html"));
 }
 
 function syncSelection(tabs) {

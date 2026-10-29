@@ -147,6 +147,16 @@ describe("link export", () => {
 });
 
 describe("bulk tab selection", () => {
+  it("excludes current and pending dashboards from selection", () => {
+    const app = createDashboard([
+      { id: 1, url: "", pendingUrl: `${dashboardUrl}?loading=1` },
+      { id: 2, url: "https://example.com", pendingUrl: dashboardUrl },
+      { id: 3, url: dashboardUrl, pendingUrl: "https://example.com" },
+      { id: 4, url: "https://example.com" },
+    ]);
+    app.run("selectFilteredTabs(true)");
+    assert.deepEqual(Array.from(app.run("selectedTabIds")), [4]);
+  });
   it("selects every filtered tab in collapsed groups and excludes dashboards", () => {
     const app = createDashboard([{ id: 1 }, { id: 2 }, { id: 3, url: `${dashboardUrl}#top` }]);
     app.run(`document.getElementById("groupBy").value = "domain";
@@ -224,6 +234,16 @@ async function closeInBackground(tabs, tabIds, remove) {
 }
 
 describe("background bulk closing", () => {
+  it("protects pending dashboards even when an existing non-dashboard URL is present", async () => {
+    const removed = [];
+    await closeInBackground([
+      { id: 1, url: "", pendingUrl: `${dashboardUrl}?loading=1#top` },
+      { id: 2, url: "https://example.com", pendingUrl: dashboardUrl },
+      { id: 3, url: dashboardUrl, pendingUrl: "https://other.com" },
+      { id: 4, url: "https://example.com" },
+    ], [1, 2, 3, 4], async (ids) => removed.push(...ids));
+    assert.deepEqual(removed, [4]);
+  });
   it("closes only requested live tabs and protects dashboards", async () => {
     const removed = [];
     const response = await closeInBackground([
