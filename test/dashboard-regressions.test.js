@@ -9,6 +9,7 @@ function createElement() {
     children: [],
     listeners: {},
     style: {},
+    offsetHeight: 0,
     dataset: {},
     className: "",
     attributes: {},
@@ -67,6 +68,8 @@ function createDashboard(saved = {}) {
   }
   const context = vm.createContext({
     URL,
+    ResizeObserver: class { observe() {} },
+    getComputedStyle: () => ({ bottom: "24px", rowGap: "12px" }),
     setTimeout: () => 1,
     clearTimeout() {},
     window: Object.assign(createElement(), { innerWidth: 800, innerHeight: 600 }),

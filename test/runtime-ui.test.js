@@ -25,7 +25,7 @@ function dashboard(sendMessage, storage = {}) {
   }
   function element(tag) {
     return {
-      tag,
+      tag, offsetHeight: 0,
       children: [], listeners: {}, dataset: {}, style: { setProperty() {} }, value: "", hidden: true,
       classList: { toggle() {}, add() {}, remove() {} },
       appendChild(child) { this.children.push(child); child.parent = this; return child; },
@@ -67,8 +67,14 @@ function dashboard(sendMessage, storage = {}) {
   };
   get("groupBy").value = "none";
   const messages = [];
+  const resizeObservers = [];
   const context = vm.createContext({
     URL, console,
+    ResizeObserver: class {
+      constructor(callback) { resizeObservers.push(callback); }
+      observe() {}
+    },
+    getComputedStyle: () => ({ bottom: "24px", rowGap: "12px" }),
     setTimeout(callback, delay = 0) {
       timers.set(++timerId, { callback, at: now + delay });
       return timerId;
@@ -96,7 +102,8 @@ function dashboard(sendMessage, storage = {}) {
   for (const file of ["utils.js", "triage.js"]) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, "..", file), "utf8"), context);
   }
-  return { get, messages, advanceTime, run: (code) => vm.runInContext(code, context),
+  return { get, messages, advanceTime, resize: () => resizeObservers.forEach((callback) => callback()),
+    run: (code) => vm.runInContext(code, context),
     settle: () => new Promise(setImmediate) };
 }
 

@@ -1027,6 +1027,17 @@ document.addEventListener("keydown", (e) => {
 
 // --- Most-recent session recovery ---
 
+function updateUndoToastSpace() {
+  const toast = document.getElementById("undo-toast");
+  const style = getComputedStyle(toast);
+  // Keep the final row above the fixed notice, including wrapped/zoomed layouts.
+  const height = toast.hidden ? 0 : toast.offsetHeight + parseFloat(style.bottom) + parseFloat(style.rowGap);
+  document.getElementById("undo-toast-status").style.height = `${height}px`;
+}
+
+const undoToastObserver = new ResizeObserver(updateUndoToastSpace);
+undoToastObserver.observe(document.getElementById("undo-toast"));
+
 function showUndoToast(message) {
   const toast = document.getElementById("undo-toast");
   const msgEl = document.getElementById("undo-toast-msg");
@@ -1044,6 +1055,7 @@ function showUndoToast(message) {
   if (hadFocus) newBtn.focus({ preventScroll: true });
   newBtn.textContent = "Restore most recently closed tab/window";
   newBtn.title = "The browser chooses the session; this is not an undo of this batch.";
+  updateUndoToastSpace();
 
   let restoring = false;
   newBtn.addEventListener("click", async () => {
@@ -1059,6 +1071,7 @@ function showUndoToast(message) {
           document.getElementById("search").focus();
         }
         toast.hidden = true;
+        updateUndoToastSpace();
         newBtn.disabled = true;
       }
     } catch (error) {

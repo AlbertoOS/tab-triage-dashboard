@@ -11,6 +11,8 @@ function createElement() {
     children: [],
     listeners: {},
     className: "",
+    style: {},
+    offsetHeight: 0,
     dataset: {},
     classList: { toggle() {}, remove() {}, add() {} },
     appendChild(child) { this.children.push(child); },
@@ -49,6 +51,8 @@ function createDashboard(tabs) {
   const revokedUrls = [];
   const context = vm.createContext({
     Blob,
+    ResizeObserver: class { observe() {} },
+    getComputedStyle: () => ({ bottom: "24px", rowGap: "12px" }),
     URL: {
       createObjectURL(blob) {
         blobs.push(blob);
