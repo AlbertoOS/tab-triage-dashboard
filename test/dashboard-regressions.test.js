@@ -11,9 +11,19 @@ function createElement() {
     style: {},
     dataset: {},
     className: "",
-    appendChild(child) { this.children.push(child); },
-    setAttribute() {},
-    addEventListener(type, callback) { this.listeners[type] = callback; },
+    attributes: {},
+    appendChild(child) { this.children.push(child); child.parentElement = this; },
+    setAttribute(name, value) { this.attributes[name] = String(value); },
+    getAttribute(name) { return this.attributes[name] ?? null; },
+    addEventListener(type, callback, options) {
+      this.listeners[type] = callback;
+      this.listenerOptions ??= {};
+      this.listenerOptions[type] = options;
+    },
+    closest(selector) {
+      if (this.className.split(" ").includes(selector.slice(1))) return this;
+      return this.parentElement?.closest(selector) ?? null;
+    },
     querySelector(selector) {
       for (const child of this.children) {
         if (child.className.split(" ").includes(selector.slice(1))) return child;
@@ -36,10 +46,31 @@ function createElement() {
 }
 
 function createDashboard(saved = {}) {
+  const elements = new Map();
+  const menus = [];
+  const document = Object.assign(createElement(), {
+    createElement,
+    closest: undefined,
+    getElementById: (id) => elements.get(id),
+    querySelector: () => createElement(),
+    querySelectorAll: (selector) => selector === ".more-menu.open"
+      ? menus.filter((menu) => menu.classList.contains("open")) : [],
+  });
+  const html = fs.readFileSync(path.join(__dirname, "../triage.html"), "utf8");
+  for (const [tag, id] of html.matchAll(/<[^>]*\bid="([^"]+)"[^>]*>/g)) {
+    const element = createElement();
+    for (const [, name, value] of tag.matchAll(/([\w-]+)="([^"]*)"/g)) {
+      element.setAttribute(name, value);
+    }
+    element.hidden = /\shidden(?:\s|>)/.test(tag);
+    elements.set(id, element);
+  }
   const context = vm.createContext({
     URL,
-    window: { innerWidth: 800, innerHeight: 600 },
-    document: { createElement, querySelectorAll: () => [] },
+    setTimeout: () => 1,
+    clearTimeout() {},
+    window: Object.assign(createElement(), { innerWidth: 800, innerHeight: 600 }),
+    document,
     browser: {
       runtime: { getURL: () => "moz-extension://test/triage.html" },
       storage: {
@@ -54,9 +85,11 @@ function createDashboard(saved = {}) {
     const source = fs.readFileSync(path.join(__dirname, "..", file), "utf8");
     vm.runInContext(source.split("// --- Event listeners ---")[0], context);
   }
-  // Ignore-list tests isolate unrelated rendering, not persistence or matching.
-  vm.runInContext("render = () => {}; updateIgnoredPanel = () => {};", context);
-  return { saved, context, run: (code) => vm.runInContext(code, context) };
+  // Isolate rendering and initial tab I/O, but register real production handlers.
+  vm.runInContext("render = () => {}; updateIgnoredPanel = () => {}; loadTabs = async () => {};", context);
+  const source = fs.readFileSync(path.join(__dirname, "../triage.js"), "utf8");
+  vm.runInContext(source.slice(source.indexOf("// --- Event listeners ---")), context);
+  return { saved, context, elements, menus, html, run: (code) => vm.runInContext(code, context) };
 }
 
 function createMenu(app, rect, size = { width: 160, height: 100 }) {
@@ -72,10 +105,49 @@ function createMenu(app, rect, size = { width: 160, height: 100 }) {
       height: Math.min(size.height, parseFloat(menu.style.maxHeight) || Infinity),
     };
   };
+  app.menus.push(menu);
   return { menu, click: () => button.listeners.click({ stopPropagation() {} }) };
 }
 
 describe("fixed row menus", () => {
+  it("dismisses every open row menu on captured outer scroll, including nested scrollers", () => {
+    const app = createDashboard();
+    const { document } = app.context;
+    const first = createMenu(app, { top: 20, bottom: 40, right: 100 });
+    const second = createMenu(app, { top: 60, bottom: 80, right: 100 });
+    for (const target of [document, createElement(), app.elements.get("tab-body")]) {
+      first.click();
+      // Multiple stale menus must all close, not only the first match.
+      second.menu.className += " open";
+      const capture = document.listenerOptions?.scroll;
+      if (capture === true || capture?.capture) document.listeners.scroll({ target, bubbles: false });
+      assert.equal(first.menu.classList.contains("open"), false);
+      assert.equal(second.menu.classList.contains("open"), false);
+    }
+  });
+
+  it("preserves scrolling in a menu and its nested contents", () => {
+    const app = createDashboard();
+    const { menu, click } = createMenu(app, { top: 20, bottom: 40, right: 100 });
+    click();
+    assert.equal(typeof app.context.document.listeners.scroll, "function");
+    for (const target of [menu, menu.children[0]]) {
+      app.context.document.listeners.scroll({ target });
+      assert.equal(menu.classList.contains("open"), true);
+    }
+  });
+
+  it("dismisses every open row menu on window resize", () => {
+    const app = createDashboard();
+    const first = createMenu(app, { top: 20, bottom: 40, right: 100 });
+    const second = createMenu(app, { top: 60, bottom: 80, right: 100 });
+    first.click();
+    second.menu.className += " open";
+    app.context.window.listeners.resize?.({ target: app.context.window });
+    assert.equal(first.menu.classList.contains("open"), false);
+    assert.equal(second.menu.classList.contains("open"), false);
+  });
+
   it("constrains oversized menus to the viewport with scrollable contents", () => {
     const app = createDashboard();
     const { menu, click } = createMenu(app,
@@ -114,6 +186,59 @@ describe("fixed row menus", () => {
       click();
       assert.equal(menu.classList.contains("open"), false);
     }
+  });
+});
+
+describe("fuzzy search accessibility", () => {
+  it("initializes the actual HTML toggle as not pressed", () => {
+    const app = createDashboard();
+    assert.equal(app.run("fuzzySearch"), false);
+    assert.equal(app.elements.get("fuzzyToggle").getAttribute("aria-pressed"), "false");
+  });
+
+  it("exposes enabled and disabled states through the production click handler", () => {
+    const app = createDashboard();
+    const button = app.elements.get("fuzzyToggle");
+    for (const enabled of [true, false, true]) {
+      button.listeners.click();
+      assert.equal(app.run("fuzzySearch"), enabled);
+      assert.equal(button.getAttribute("aria-pressed"), String(enabled));
+      assert.equal(button.classList.contains("active"), enabled);
+      assert.equal(app.elements.get("search").placeholder, enabled
+        ? "Fuzzy search (match all words in any order)..."
+        : "Search tabs (title, URL, domain)...");
+    }
+  });
+});
+
+describe("undo toast accessibility", () => {
+  it("keeps a polite status region mounted outside the hidden toast", () => {
+    const app = createDashboard();
+    const region = app.elements.get("undo-toast-status");
+    assert.ok(region, "a persistent status region must exist in the HTML");
+    assert.equal(region.getAttribute("role"), "status");
+    assert.equal(region.getAttribute("aria-live"), "polite");
+    assert.equal(region.hidden, false);
+    assert.match(app.html, /<div[^>]*id="undo-toast-status"[^>]*>\s*<div[^>]*id="undo-toast"/);
+    assert.equal(app.elements.get("undo-toast").hidden, true);
+  });
+
+  it("reveals the undo contents before the real toast handler updates its announcement", () => {
+    const app = createDashboard();
+    const toast = app.elements.get("undo-toast");
+    const button = app.elements.get("undo-toast-btn");
+    const messages = [];
+    button.cloneNode = () => createElement();
+    button.replaceWith = (replacement) => app.elements.set("undo-toast-btn", replacement);
+    Object.defineProperty(app.elements.get("undo-toast-msg"), "textContent", {
+      set(message) {
+        assert.equal(toast.hidden, false, "the message must be exposed before it changes");
+        messages.push(message);
+      },
+    });
+    app.run('showUndoToast("Closed example tab. Undo available.", 1)');
+    assert.deepEqual(messages, ["Closed example tab. Undo available."]);
+    assert.equal(typeof app.elements.get("undo-toast-btn").listeners.click, "function");
   });
 });
 

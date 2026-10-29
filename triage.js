@@ -848,6 +848,16 @@ document.addEventListener("click", (e) => {
   }
 });
 
+// Fixed row menus must not remain beside a different row after the page moves.
+function closeRowMenus() {
+  document.querySelectorAll(".more-menu.open").forEach((menu) => menu.classList.remove("open"));
+}
+
+document.addEventListener("scroll", (event) => {
+  if (!event.target.closest?.(".more-menu")) closeRowMenus();
+}, true);
+window.addEventListener("resize", closeRowMenus);
+
 // Domain search within dropdown
 document.getElementById("domainSearch").addEventListener("input", (e) => {
   const query = e.target.value.toLowerCase();
@@ -897,6 +907,7 @@ document.getElementById("showIgnored").addEventListener("change", (e) => {
 document.getElementById("fuzzyToggle").addEventListener("click", () => {
   fuzzySearch = !fuzzySearch;
   document.getElementById("fuzzyToggle").classList.toggle("active", fuzzySearch);
+  document.getElementById("fuzzyToggle").setAttribute("aria-pressed", String(fuzzySearch));
   document.getElementById("search").placeholder = fuzzySearch
     ? "Fuzzy search (match all words in any order)..."
     : "Search tabs (title, URL, domain)...";
@@ -960,8 +971,8 @@ function showUndoToast(message, count) {
   const btn = document.getElementById("undo-toast-btn");
 
   clearTimeout(undoTimer);
-  msgEl.textContent = message;
   toast.hidden = false;
+  msgEl.textContent = message;
 
   // Replace button to clear old listeners
   const newBtn = btn.cloneNode(true);
