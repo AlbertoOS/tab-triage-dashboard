@@ -30,6 +30,8 @@ Install from [Firefox Add-ons (AMO)](https://addons.mozilla.org/en-US/firefox/ad
 
 ## Usage
 
+Filter and sort the tab list, then use **Select all filtered tabs** (or the checkbox in the table header) and **Close selected** to close the result in one batch. You can also select individual rows and clear the selection. Collapsed groups are included; dashboard tabs are excluded. Changing filters removes hidden tabs from the selection.
+
 Click the 🧐 icon in the toolbar to open the triage dashboard.
 
 ## Development
