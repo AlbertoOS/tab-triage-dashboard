@@ -14,7 +14,8 @@ function background(overrides = {}) {
       getURL: () => "chrome-extension://fixture/triage.html",
       onMessage: { addListener(fn) { listener = fn; } },
     },
-    tabs: { query: async () => [], remove: async () => {}, ...overrides.tabs },
+    tabs: { query: async () => [], remove: async () => {},
+      get: async (id) => ({ id, active: false, discarded: false }), ...overrides.tabs },
     windows: { update: async () => {}, ...overrides.windows },
     sessions: overrides.sessions,
   };
@@ -88,10 +89,14 @@ it("acknowledges successful single-tab commands only after their browser calls",
   for (const [type, method] of [["closeTab", "remove"], ["discardTab", "discard"]]) {
     let complete;
     let calledId;
-    const send = background({ tabs: { [method]: (id) => {
-      calledId = id;
-      return new Promise((resolve) => { complete = resolve; });
-    } } });
+    let completed = false;
+    const send = background({ tabs: {
+      get: async (id) => ({ id, active: false, discarded: completed }),
+      [method]: (id) => {
+        calledId = id;
+        return new Promise((resolve) => { complete = () => { completed = true; resolve(); }; });
+      },
+    } });
     let answered = false;
     const response = send({ type, tabId: 7 }).then((result) => { answered = true; return result; });
     await new Promise(setImmediate);

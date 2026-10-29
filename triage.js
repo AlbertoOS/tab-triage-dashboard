@@ -541,7 +541,9 @@ function createTabRow(tab) {
   const discardBtn = document.createElement("button");
   discardBtn.className = "btn-discard";
   discardBtn.textContent = "Discard tab";
-  if (tab.discarded) discardBtn.disabled = true;
+  discardBtn.disabled = !!(tab.active || tab.discarded);
+  discardBtn.title = tab.active ? "The active tab cannot be discarded."
+    : tab.discarded ? "This tab is already discarded." : "Discard inactive tab to free memory";
   moreMenu.appendChild(discardBtn);
   const ignoreUrlBtn = document.createElement("button");
   ignoreUrlBtn.className = "btn-ignore-url";

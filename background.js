@@ -44,9 +44,19 @@ api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (tabIds.length > 0) await api.tabs.remove(tabIds);
         break;
       }
-      case "discardTab":
-        await api.tabs.discard(msg.tabId);
+      case "discardTab": {
+        const tab = await api.tabs.get(msg.tabId);
+        if (tab.active) throw new Error("The active tab cannot be discarded.");
+        if (tab.discarded) break; // Already at the requested state: idempotent success.
+        const discardedTab = await api.tabs.discard(msg.tabId);
+        // Firefox fulfills with void even for a no-op; activation can also race
+        // the guard. Chrome may return a replacement tab ID. Verify current state.
+        const discardedId = validId(discardedTab?.id) ? discardedTab.id : msg.tabId;
+        if (!(await api.tabs.get(discardedId)).discarded) {
+          throw new Error("The tab was not discarded. It may be active or protected by the browser.");
+        }
         break;
+      }
       case "restoreTab":
         if (!api.sessions?.restore) throw new Error("Session restoration is unavailable.");
         // The browser chooses the most recent session, which can be a whole window.
