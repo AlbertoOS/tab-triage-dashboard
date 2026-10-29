@@ -390,7 +390,8 @@ function render() {
     const action = focusSelector && row?.querySelector(`.${focusSelector}`);
     const target = action && !action.disabled ? action : row?.querySelector(".btn-more");
     // Menu actions are hidden after a rebuild; removed/filtered rows stay gone.
-    (target || document.getElementById("search")).focus({ preventScroll: true });
+    if (target) target.focus({ preventScroll: true });
+    else document.getElementById("search").focus();
   }
 }
 
@@ -1055,7 +1056,7 @@ function showUndoToast(message) {
       await sendCommand({ type: "restoreTab" });
       if (document.getElementById("undo-toast-btn") === newBtn) {
         if (document.activeElement === newBtn) {
-          document.getElementById("search").focus({ preventScroll: true });
+          document.getElementById("search").focus();
         }
         toast.hidden = true;
         newBtn.disabled = true;
