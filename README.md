@@ -54,9 +54,32 @@ npm install
 | Script | Purpose |
 |---|---|
 | `npm run lint` | Validate extension with Mozilla's addons-linter |
-| `npm run zip` | Build `tab-triage-dashboard.zip` from source files |
+| `npm run zip` | Build separate `tab-triage-dashboard-firefox.zip` and `tab-triage-dashboard-chrome.zip` archives |
 | `npm run release` | Full release: bump version, lint, zip, tag, push, GitHub release |
 | `npm run release:publish` | Create/update GitHub release for the latest tag |
+
+### Packaging and release retries
+
+Packaging requires Node.js 24+, Bash, `zip`, and `unzip` (for the packaging tests). Tag-based builds also require Git and `tar`. Both source manifests and `package.json` must have exactly the same version; archives preserve that version without adding a Git commit-count suffix. Ordinary `npm run zip` packages the current source tree using the distribution allowlist.
+
+For release retries, select an existing local `[v]MAJOR.MINOR.PATCH` tag explicitly:
+
+```sh
+npm run release:publish -- "$TAG"
+```
+
+This **pushes only the selected tag to `origin` and creates or updates its GitHub Release** using `gh`. A failed tag push stops publication. The no-argument invocation remains compatible and selects the nearest reachable tag (`git describe`), not necessarily the newest version; explicit selection is recommended.
+
+To inspect artifacts without pushing tags or invoking `gh`, set `TAG` to the desired existing release tag and use a private output directory:
+
+```sh
+artifact_dir=$(mktemp -d "${TMPDIR:-/tmp}/tab-triage-artifacts.XXXXXX")
+bash release-publish.sh "$TAG" --build-only "$artifact_dir"
+```
+
+Both release paths always rebuild **both** browser archives from a pinned tag commit exported with `git archive` into private scratch. They ignore cached ZIPs and current dirty/untracked files, use the maintained builder rather than executing historical scripts, and reject tag/source version mismatches, missing distribution inputs, symlinks, and export transformations. `--build-only` also saves `provenance.json` with the selected tag object, commit, version, and SHA-256 hashes of both ZIPs; keep it alongside the inspected assets. The output directory must already exist. Scratch is removed on normal exit; forced termination may leave it behind. This is source-provenance checking, not tag-signature verification or a promise of byte-reproducible ZIP timestamps.
+
+The full `npm run release` flow still prompts, bumps versions, validates, commits, and tags; its publishable assets now use that same tag-based build-only path. It does not publish to browser stores. A packaging failure after tagging can leave a local release commit/tag for an explicit retry; it is not rolled back automatically. Tags predating the dual-manifest/package layout cannot be rebuilt by this path.
 
 ### Linting
 
