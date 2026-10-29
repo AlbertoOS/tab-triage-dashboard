@@ -11,6 +11,8 @@ function createElement() {
     children: [],
     listeners: {},
     className: "",
+    style: {},
+    offsetHeight: 0,
     dataset: {},
     classList: { toggle() {}, remove() {}, add() {} },
     appendChild(child) { this.children.push(child); },
@@ -26,12 +28,22 @@ function createElement() {
       }
       return null;
     },
+    contains(child) { return child === this || this.children.some((item) => item.contains(child)); },
     set innerHTML(value) { this.children = []; },
   };
 }
 
 function createDashboard(tabs) {
   const elements = new Map();
+  function element() {
+    const node = createElement();
+    node.hidden = true;
+    node.cloneNode = () => element();
+    node.replaceWith = (replacement) => {
+      for (const [id, current] of elements) if (current === node) elements.set(id, replacement);
+    };
+    return node;
+  }
   const messages = [];
   const downloads = [];
   const blobs = [];
@@ -39,6 +51,8 @@ function createDashboard(tabs) {
   const revokedUrls = [];
   const context = vm.createContext({
     Blob,
+    ResizeObserver: class { observe() {} },
+    getComputedStyle: () => ({ bottom: "24px", rowGap: "12px" }),
     URL: {
       createObjectURL(blob) {
         blobs.push(blob);
@@ -59,7 +73,7 @@ function createDashboard(tabs) {
     document: {
       body: createElement(),
       getElementById: (id) => {
-        if (!elements.has(id)) elements.set(id, createElement());
+        if (!elements.has(id)) elements.set(id, element());
         return elements.get(id);
       },
       createElement: (tag) => {
@@ -80,6 +94,10 @@ function createDashboard(tabs) {
   vm.runInContext(fs.readFileSync(path.join(__dirname, "../utils.js"), "utf8"), context);
   const source = fs.readFileSync(path.join(__dirname, "../triage.js"), "utf8");
   vm.runInContext(source.split("// --- Event listeners ---")[0], context);
+  vm.runInContext(source.slice(source.indexOf("function closeRowMenus()"),
+    source.indexOf('document.addEventListener("scroll"')), context);
+  vm.runInContext(source.slice(source.indexOf("// --- Most-recent session recovery ---"),
+    source.indexOf("// --- Init ---")), context);
   vm.runInContext(`
     enrichedTabs = fixtureTabs;
     getFilteredTabs = () => fixtureTabs;
@@ -147,6 +165,16 @@ describe("link export", () => {
 });
 
 describe("bulk tab selection", () => {
+  it("excludes current and pending dashboards from selection", () => {
+    const app = createDashboard([
+      { id: 1, url: "", pendingUrl: `${dashboardUrl}?loading=1` },
+      { id: 2, url: "https://example.com", pendingUrl: dashboardUrl },
+      { id: 3, url: dashboardUrl, pendingUrl: "https://example.com" },
+      { id: 4, url: "https://example.com" },
+    ]);
+    app.run("selectFilteredTabs(true)");
+    assert.deepEqual(Array.from(app.run("selectedTabIds")), [4]);
+  });
   it("selects every filtered tab in collapsed groups and excludes dashboards", () => {
     const app = createDashboard([{ id: 1 }, { id: 2 }, { id: 3, url: `${dashboardUrl}#top` }]);
     app.run(`document.getElementById("groupBy").value = "domain";
@@ -191,6 +219,35 @@ describe("bulk tab selection", () => {
     assert.equal(app.elements.get("closeSelected").disabled, true);
   });
 
+  it("offers one browser-chosen session restore only after selected closure is acknowledged", async () => {
+    const app = createDashboard([{ id: 1 }, { id: 2 }]);
+    app.context.finishClose = null;
+    app.run(`api.runtime.sendMessage = (message) => {
+      if (message.type === "closeTabs") return new Promise((resolve) => { finishClose = resolve; });
+      return Promise.resolve({ ok: true });
+    }; selectFilteredTabs(true);`);
+    const pending = app.run("closeSelectedTabs()");
+    assert.equal(app.run('document.getElementById("undo-toast").hidden'), true);
+    app.context.finishClose({ ok: true });
+    await pending;
+    const toast = app.elements.get("undo-toast");
+    assert.equal(toast.hidden, false, "successful bulk closure must expose recovery");
+    assert.equal(app.elements.get("undo-toast-msg").textContent, "Selected-tab close request completed.");
+    const button = app.elements.get("undo-toast-btn");
+    assert.equal(button.textContent, "Restore most recently closed tab/window");
+    assert.match(button.title, /browser chooses.*not an undo of this batch/);
+    assert.equal(app.run("selectedTabIds.size"), 0);
+    assert.equal(app.elements.get("bulkError").textContent, "");
+    app.run(`const fixtureRestores = [];
+      api.runtime.sendMessage = async (message) => { fixtureRestores.push(message); return { ok: true }; };`);
+    assert.equal(app.run("fixtureRestores.length"), 0, "never restore automatically");
+    await button.listeners.click();
+    await button.listeners.click();
+    assert.deepEqual(JSON.parse(app.run("JSON.stringify(fixtureRestores)")), [{ type: "restoreTab" }]);
+    assert.equal(toast.hidden, true);
+    assert.equal(button.disabled, true);
+  });
+
   it("refreshes after failure, retains surviving selection and allows retry", async () => {
     const app = createDashboard([{ id: 1 }, { id: 2 }]);
     app.run(`selectFilteredTabs(true);
@@ -224,6 +281,16 @@ async function closeInBackground(tabs, tabIds, remove) {
 }
 
 describe("background bulk closing", () => {
+  it("protects pending dashboards even when an existing non-dashboard URL is present", async () => {
+    const removed = [];
+    await closeInBackground([
+      { id: 1, url: "", pendingUrl: `${dashboardUrl}?loading=1#top` },
+      { id: 2, url: "https://example.com", pendingUrl: dashboardUrl },
+      { id: 3, url: dashboardUrl, pendingUrl: "https://other.com" },
+      { id: 4, url: "https://example.com" },
+    ], [1, 2, 3, 4], async (ids) => removed.push(...ids));
+    assert.deepEqual(removed, [4]);
+  });
   it("closes only requested live tabs and protects dashboards", async () => {
     const removed = [];
     const response = await closeInBackground([

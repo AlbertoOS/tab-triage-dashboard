@@ -1,4 +1,9 @@
 :root {
+  --surface1: #363a4f;
+  --surface2: #494d64;
+  --text: #cad3f5;
+  --blue: #8aadf4;
+  --base: #24273a;
   --favicon-size: 16px;
 }
 
@@ -292,6 +297,37 @@ label {
   cursor: pointer;
 }
 
+/* Toggle button (e.g. fuzzy search) */
+.btn-toggle {
+  background: transparent;
+  border: 1px solid #494d64;
+  border-radius: 4px;
+  color: #a5adcb;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+  white-space: nowrap;
+}
+
+.btn-toggle:hover {
+  border-color: #8aadf4;
+  color: #cad3f5;
+}
+
+.btn-toggle.active {
+  background: rgba(138, 173, 244, 0.15);
+  border-color: #8aadf4;
+  color: #8aadf4;
+}
+
+/* The enabled border already uses the focus color; keep focus distinct. */
+#fuzzyToggle:focus-visible {
+  outline: 2px solid #8aadf4;
+  outline-offset: 2px;
+}
+
 /* Status toggle buttons (3-state: off / include / exclude) */
 .status-toggle {
   background: transparent;
@@ -581,33 +617,30 @@ button:disabled { opacity: 0.45; cursor: default; }
   background: rgba(245, 169, 127, 0.3);
 }
 
-.ignore-dropdown {
+.more-dropdown {
   position: relative;
 }
 
-.btn-ignore {
-  padding: 3px 8px;
+.btn-more {
+  padding: 3px 6px;
   background: rgba(110, 115, 141, 0.15);
   color: #6e738d;
   border: 1px solid rgba(110, 115, 141, 0.3);
   border-radius: 3px;
   cursor: pointer;
-  font-size: 11px;
+  font-size: 16px;
   font-family: inherit;
-  white-space: nowrap;
+  line-height: 1;
 }
 
-.btn-ignore:hover {
+.btn-more:hover {
   background: rgba(110, 115, 141, 0.3);
   color: #a5adcb;
 }
 
-.ignore-menu {
+.more-menu {
   display: none;
-  position: absolute;
-  top: 100%;
-  right: 0;
-  margin-top: 4px;
+  position: fixed;
   background: #24273a;
   border: 1px solid #494d64;
   border-radius: 4px;
@@ -616,12 +649,12 @@ button:disabled { opacity: 0.45; cursor: default; }
   min-width: 160px;
 }
 
-.ignore-menu.open {
+.more-menu.open {
   display: flex;
   flex-direction: column;
 }
 
-.ignore-menu button {
+.more-menu button {
   padding: 6px 12px;
   background: none;
   border: none;
@@ -634,16 +667,31 @@ button:disabled { opacity: 0.45; cursor: default; }
   white-space: nowrap;
 }
 
-.ignore-menu button:hover {
+.more-menu button:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: -2px;
+}
+
+.more-menu button:hover {
   background: rgba(138, 173, 244, 0.1);
   color: #cad3f5;
 }
 
-.ignore-menu button:first-child {
+.more-menu button:disabled {
+  color: #494d64;
+  cursor: default;
+}
+
+.more-menu button:disabled:hover {
+  background: none;
+  color: #494d64;
+}
+
+.more-menu button:first-child {
   border-radius: 4px 4px 0 0;
 }
 
-.ignore-menu button:last-child {
+.more-menu button:last-child {
   border-radius: 0 0 4px 4px;
 }
 
@@ -750,6 +798,75 @@ button:disabled { opacity: 0.45; cursor: default; }
 
 .btn-reset-ignored:hover {
   background: rgba(237, 135, 150, 0.3);
+}
+
+/* Undo toast */
+.undo-toast {
+  max-width: calc(100% - 32px);
+  width: max-content;
+  flex-wrap: wrap;
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--surface1);
+  border: 1px solid var(--surface2);
+  border-radius: 8px;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  z-index: 100;
+  font-size: 13px;
+  color: var(--text);
+  animation: toast-in 0.2s ease-out;
+}
+
+.undo-toast[hidden] {
+  display: none;
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(12px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+#undo-toast-msg {
+  flex: 1 1 120px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.btn-undo {
+  max-width: 100%;
+  background: var(--blue);
+  color: var(--base);
+  border: none;
+  border-radius: 4px;
+  padding: 4px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+  font-weight: 600;
+}
+
+.btn-undo[aria-disabled="true"],
+.btn-undo:disabled {
+  opacity: 1;
+  cursor: wait;
+}
+
+.btn-undo:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 3px;
+}
+
+.btn-undo:hover {
+  background: var(--blue);
+  filter: brightness(1.15);
 }
 
 /* Responsive */

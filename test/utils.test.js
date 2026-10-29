@@ -38,10 +38,22 @@ describe("getDomain", () => {
 // --- normalizeUrl ---
 
 describe("normalizeUrl", () => {
-  it("normalizes URL to origin + pathname + search", () => {
+  it("strips only pathname trailing slashes, preserving query and hash bytes", () => {
+    for (const [url, expected] of [
+      ["https://example.com/path/?q=1#hash", "https://example.com/path?q=1#hash"],
+      ["https://example.com/path?q=/", "https://example.com/path?q=/"],
+      ["https://example.com/path#route/", "https://example.com/path#route/"],
+      ["https://example.com/path///?q=%2F/#route%2F/", "https://example.com/path?q=%2F/#route%2F/"],
+      ["https://example.com/#/route/", "https://example.com#/route/"],
+    ]) {
+      assert.equal(normalizeUrl(url), expected, url);
+    }
+  });
+
+  it("normalizes URL to origin + pathname + search + hash", () => {
     assert.equal(
       normalizeUrl("https://example.com/path?q=1#hash"),
-      "https://example.com/path?q=1",
+      "https://example.com/path?q=1#hash",
     );
   });
 
@@ -60,6 +72,13 @@ describe("normalizeUrl", () => {
     assert.equal(
       normalizeUrl("https://example.com"),
       "https://example.com",
+    );
+  });
+
+  it("distinguishes URLs that differ only by hash fragment", () => {
+    assert.notEqual(
+      normalizeUrl("https://portal.azure.com/#@tenant/resource/sub1"),
+      normalizeUrl("https://portal.azure.com/#@tenant/resource/sub2"),
     );
   });
 });

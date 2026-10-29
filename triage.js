@@ -11,14 +11,53 @@ let collapsedGroups = new Set();
 let ignoredUrls = new Set();
 let ignoredDomains = new Set();
 let showIgnored = false;
+let fuzzySearch = false;
 let selectedTabIds = new Set();
 let closingSelected = false;
 
 // --- Data ---
 
+async function sendCommand(message) {
+  const response = await api.runtime.sendMessage(message);
+  if (response?.ok !== true) throw new Error(response?.error || "Invalid browser response.");
+  return response;
+}
+
+function reportError(message) {
+  const status = document.getElementById("bulkError");
+  status.textContent = status.textContent ? `${status.textContent} ${message}` : message;
+}
+
+async function refreshTabs() {
+  document.getElementById("bulkError").textContent = "";
+  try {
+    await loadTabs();
+  } catch (error) {
+    reportError(`Could not refresh tabs: ${error.message}`);
+  }
+}
+
+async function runTabAction(message, successMessage) {
+  document.getElementById("bulkError").textContent = "";
+  try {
+    await sendCommand(message);
+    if (successMessage) showUndoToast(successMessage);
+  } catch (error) {
+    reportError(`Could not complete tab action: ${error.message}`);
+  } finally {
+    // Operations can partly succeed before the browser rejects them.
+    try {
+      await loadTabs();
+    } catch (error) {
+      reportError(`Could not refresh tabs: ${error.message}`);
+    }
+  }
+}
+
 async function loadTabs() {
   await loadIgnoreLists();
-  const response = await api.runtime.sendMessage({ type: "getTabs" });
+  const response = await sendCommand({ type: "getTabs" });
+  if (!Array.isArray(response.tabs)) throw new Error("Invalid tab response.");
   allTabs = response.tabs;
   enrichTabs();
   populateDomainFilter();
@@ -103,7 +142,12 @@ function getFilteredTabs() {
     // Search
     if (search) {
       const haystack = `${tab.title || ""} ${tab.url || ""} ${tab.domain}`.toLowerCase();
-      if (!haystack.includes(search)) return false;
+      if (fuzzySearch) {
+        const terms = search.split(/\s+/);
+        if (!terms.every((term) => haystack.includes(term))) return false;
+      } else {
+        if (!haystack.includes(search)) return false;
+      }
     }
 
     // Domain filter (OR — match any checked domain; empty = all)
@@ -184,7 +228,8 @@ function groupTabs(tabs) {
 // --- Rendering ---
 
 function isSelectableTab(tab) {
-  return (tab.url || "").split(/[?#]/)[0] !== api.runtime.getURL("triage.html");
+  return ![tab.url, tab.pendingUrl].some((url) =>
+    (url || "").split(/[?#]/)[0] === api.runtime.getURL("triage.html"));
 }
 
 function syncSelection(tabs) {
@@ -270,16 +315,16 @@ async function closeSelectedTabs() {
   document.getElementById("bulkError").textContent = "";
   render();
   try {
-    const response = await api.runtime.sendMessage({ type: "closeTabs", tabIds });
-    if (!response || !response.ok) throw new Error(response?.error || "Could not close selected tabs.");
+    await sendCommand({ type: "closeTabs", tabIds });
     selectedTabIds.clear();
+    showUndoToast("Selected-tab close request completed.");
   } catch (error) {
     document.getElementById("bulkError").textContent = `Could not close selected tabs: ${error.message}`;
   } finally {
     try {
       await loadTabs();
     } catch (error) {
-      document.getElementById("bulkError").textContent = `Could not refresh tabs: ${error.message}`;
+      reportError(`Could not refresh tabs: ${error.message}`);
     }
     closingSelected = false;
     render();
@@ -287,6 +332,13 @@ async function closeSelectedTabs() {
 }
 
 function render() {
+  const tbody = document.getElementById("tab-body");
+  // Capture current focus immediately before rebuilding, not when an async action
+  // starts: a pending (or older) action must never steal newer user focus.
+  const focused = document.activeElement;
+  const focusedRow = Array.from(tbody.children).find((row) => row.contains(focused));
+  const focusSelector = ["tab-select", "btn-goto", "btn-close", "btn-dedup", "btn-more"]
+    .find((name) => (focused?.className || "").split(" ").includes(name));
   const filtered = getFilteredTabs();
   syncSelection(filtered);
   updateSelectionControls(filtered);
@@ -296,7 +348,6 @@ function render() {
   updateStats(filtered.length, enrichedTabs.length);
   updateSortHeaders();
 
-  const tbody = document.getElementById("tab-body");
   tbody.innerHTML = "";
 
   if (groups) {
@@ -333,10 +384,20 @@ function render() {
       tbody.appendChild(createTabRow(tab));
     }
   }
+
+  if (focusedRow) {
+    const row = Array.from(tbody.children).find((item) => item.dataset.tabId === focusedRow.dataset.tabId);
+    const action = focusSelector && row?.querySelector(`.${focusSelector}`);
+    const target = action && !action.disabled ? action : row?.querySelector(".btn-more");
+    // Menu actions are hidden after a rebuild; removed/filtered rows stay gone.
+    if (target) target.focus({ preventScroll: true });
+    else document.getElementById("search").focus();
+  }
 }
 
 function createTabRow(tab) {
   const tr = document.createElement("tr");
+  tr.dataset.tabId = String(tab.id);
   if (tab.isDuplicate) tr.className = "duplicate";
   tr.classList.toggle("selected", selectedTabIds.has(tab.id));
 
@@ -371,13 +432,15 @@ function createTabRow(tab) {
   titleTd.className = "col-title";
   const titleDiv = document.createElement("div");
   titleDiv.className = "tab-title";
-  if (tab.favIconUrl) {
-    const img = document.createElement("img");
-    img.className = "tab-favicon";
-    img.src = tab.favIconUrl;
-    img.onerror = function () { this.style.display = "none"; };
-    titleDiv.appendChild(img);
-  }
+  const img = document.createElement("img");
+  img.className = "tab-favicon";
+  img.alt = "";
+  img.src = tab.favIconUrl || "icons/icon-48.png";
+  img.onerror = () => {
+    img.onerror = null;
+    img.src = "icons/icon-48.png";
+  };
+  titleDiv.appendChild(img);
   const titleInner = document.createElement("div");
   const titleText = document.createElement("div");
   titleText.className = "tab-title-text";
@@ -466,25 +529,32 @@ function createTabRow(tab) {
     dedupBtn.textContent = "Dedup";
     actionsDiv.appendChild(dedupBtn);
   }
-  const ignoreDropdown = document.createElement("div");
-  ignoreDropdown.className = "ignore-dropdown";
-  const ignoreBtn = document.createElement("button");
-  ignoreBtn.className = "btn-ignore";
-  ignoreBtn.title = "Ignore this tab";
-  ignoreBtn.textContent = "Ignore \u25BC";
-  ignoreDropdown.appendChild(ignoreBtn);
-  const ignoreMenu = document.createElement("div");
-  ignoreMenu.className = "ignore-menu";
+  const moreDropdown = document.createElement("div");
+  moreDropdown.className = "more-dropdown";
+  const moreBtn = document.createElement("button");
+  moreBtn.className = "btn-more";
+  moreBtn.title = "More actions";
+  moreBtn.textContent = "\u22EE";
+  moreDropdown.appendChild(moreBtn);
+  const moreMenu = document.createElement("div");
+  moreMenu.className = "more-menu";
+  const discardBtn = document.createElement("button");
+  discardBtn.className = "btn-discard";
+  discardBtn.textContent = "Discard tab";
+  discardBtn.disabled = !!(tab.active || tab.discarded);
+  discardBtn.title = tab.active ? "The active tab cannot be discarded."
+    : tab.discarded ? "This tab is already discarded." : "Discard inactive tab to free memory";
+  moreMenu.appendChild(discardBtn);
   const ignoreUrlBtn = document.createElement("button");
   ignoreUrlBtn.className = "btn-ignore-url";
   ignoreUrlBtn.textContent = "Ignore URL";
-  ignoreMenu.appendChild(ignoreUrlBtn);
+  moreMenu.appendChild(ignoreUrlBtn);
   const ignoreDomainBtn = document.createElement("button");
   ignoreDomainBtn.className = "btn-ignore-domain";
   ignoreDomainBtn.textContent = "Ignore " + tab.domain;
-  ignoreMenu.appendChild(ignoreDomainBtn);
-  ignoreDropdown.appendChild(ignoreMenu);
-  actionsDiv.appendChild(ignoreDropdown);
+  moreMenu.appendChild(ignoreDomainBtn);
+  moreDropdown.appendChild(moreMenu);
+  actionsDiv.appendChild(moreDropdown);
   const closeBtn = document.createElement("button");
   closeBtn.className = "btn-close";
   closeBtn.dataset.tabId = tab.id;
@@ -495,9 +565,9 @@ function createTabRow(tab) {
   tr.appendChild(actionsTd);
 
   // Go button
-  tr.querySelector(".btn-goto").addEventListener("click", (e) => {
+  tr.querySelector(".btn-goto").addEventListener("click", async (e) => {
     e.stopPropagation();
-    api.runtime.sendMessage({
+    await runTabAction({
       type: "goToTab",
       tabId: tab.id,
       windowId: tab.windowId,
@@ -507,8 +577,7 @@ function createTabRow(tab) {
   // Close button
   tr.querySelector(".btn-close").addEventListener("click", async (e) => {
     e.stopPropagation();
-    await api.runtime.sendMessage({ type: "closeTab", tabId: tab.id });
-    loadTabs();
+    await runTabAction({ type: "closeTab", tabId: tab.id }, `Closed "${tab.title}"`);
   });
 
   // Dedup button
@@ -522,8 +591,7 @@ function createTabRow(tab) {
         .filter((t) => t.id !== tab.id && normalizeUrl(t.url || "") === normUrl)
         .map((t) => t.id);
       if (dupeIds.length === 0) return;
-      await api.runtime.sendMessage({ type: "closeTabs", tabIds: dupeIds });
-      loadTabs();
+      await runTabAction({ type: "closeTabs", tabIds: dupeIds }, "Duplicate close request completed.");
     });
   }
 
@@ -539,16 +607,39 @@ function createTabRow(tab) {
     ignoreDomain(tab.domain);
   });
 
-  // Ignore dropdown toggle
-  const ignoreBtnEl = tr.querySelector(".btn-ignore");
-  const ignoreMenuEl = tr.querySelector(".ignore-menu");
-  ignoreBtnEl.addEventListener("click", (e) => {
+  // Discard tab button
+  tr.querySelector(".btn-discard").addEventListener("click", async (e) => {
     e.stopPropagation();
-    // Close any other open ignore menus
-    document.querySelectorAll(".ignore-menu.open").forEach((m) => {
-      if (m !== ignoreMenuEl) m.classList.remove("open");
+    await runTabAction({ type: "discardTab", tabId: tab.id });
+  });
+
+  // More menu toggle
+  const moreBtnEl = tr.querySelector(".btn-more");
+  const moreMenuEl = tr.querySelector(".more-menu");
+  moreBtnEl.addEventListener("click", (e) => {
+    e.stopPropagation();
+    // Close any other open menus
+    document.querySelectorAll(".more-menu.open").forEach((m) => {
+      if (m !== moreMenuEl) m.classList.remove("open");
     });
-    ignoreMenuEl.classList.toggle("open");
+    moreMenuEl.classList.toggle("open");
+    if (!moreMenuEl.classList.contains("open")) return;
+    // Flip and clamp within the viewport above any visible recovery notice.
+    const rect = moreBtnEl.getBoundingClientRect();
+    const margin = 8;
+    const toast = document.getElementById("undo-toast");
+    const bottom = toast.hidden ? window.innerHeight - margin
+      : Math.min(window.innerHeight - margin, toast.getBoundingClientRect().top - margin);
+    moreMenuEl.style.minWidth = "0px";
+    moreMenuEl.style.maxWidth = `${Math.max(0, window.innerWidth - 2 * margin)}px`;
+    moreMenuEl.style.maxHeight = `${Math.max(0, bottom - margin)}px`;
+    moreMenuEl.style.overflow = "auto";
+    const menuRect = moreMenuEl.getBoundingClientRect();
+    const top = rect.bottom + 4 + menuRect.height > bottom
+      ? rect.top - menuRect.height - 4 : rect.bottom + 4;
+    moreMenuEl.style.top = `${Math.max(margin, Math.min(top, bottom - menuRect.height))}px`;
+    moreMenuEl.style.left = `${Math.max(margin, Math.min(rect.right - menuRect.width, window.innerWidth - menuRect.width - margin))}px`;
+    moreMenuEl.style.transform = "none";
   });
 
   return tr;
@@ -579,6 +670,7 @@ function updateSortHeaders() {
 }
 
 function populateDomainFilter() {
+  const selectedDomains = new Set(getSelectedDomains());
   const domainCounts = {};
   for (const tab of enrichedTabs) {
     if (tab.domain) {
@@ -596,6 +688,7 @@ function populateDomainFilter() {
     checkbox.type = "checkbox";
     checkbox.name = "filterDomain";
     checkbox.value = domain;
+    checkbox.checked = selectedDomains.has(domain);
     label.appendChild(checkbox);
     const nameSpan = document.createElement("span");
     nameSpan.textContent = domain;
@@ -661,7 +754,7 @@ async function saveIgnoreLists() {
 }
 
 async function ignoreUrl(url) {
-  const norm = normalizeUrl(url);
+  const norm = normalizeIgnoredUrl(url);
   if (!norm) return;
   ignoredUrls.add(norm);
   await saveIgnoreLists();
@@ -701,7 +794,7 @@ async function resetAllIgnored() {
 
 function isIgnored(tab) {
   if (ignoredDomains.has(tab.domain)) return true;
-  if (ignoredUrls.has(normalizeUrl(tab.url || ""))) return true;
+  if (ignoredUrls.has(normalizeIgnoredUrl(tab.url || ""))) return true;
   return false;
 }
 
@@ -809,10 +902,25 @@ document.addEventListener("click", (e) => {
   if (!e.target.closest(".domain-filter")) {
     domainPanel.classList.remove("open");
   }
-  if (!e.target.closest(".ignore-dropdown")) {
-    document.querySelectorAll(".ignore-menu.open").forEach((m) => m.classList.remove("open"));
+  if (!e.target.closest(".more-dropdown")) {
+    document.querySelectorAll(".more-menu.open").forEach((m) => m.classList.remove("open"));
   }
 });
+
+// Fixed row menus must not remain beside a different row after the page moves.
+function closeRowMenus() {
+  document.querySelectorAll(".more-menu.open").forEach((menu) => {
+    if (document.activeElement && menu.contains(document.activeElement)) {
+      menu.parentElement.querySelector(".btn-more").focus({ preventScroll: true });
+    }
+    menu.classList.remove("open");
+  });
+}
+
+document.addEventListener("scroll", (event) => {
+  if (!event.target.closest?.(".more-menu")) closeRowMenus();
+}, true);
+window.addEventListener("resize", closeRowMenus);
 
 // Domain search within dropdown
 document.getElementById("domainSearch").addEventListener("input", (e) => {
@@ -859,6 +967,17 @@ document.getElementById("showIgnored").addEventListener("change", (e) => {
   render();
 });
 
+// Fuzzy search toggle
+document.getElementById("fuzzyToggle").addEventListener("click", () => {
+  fuzzySearch = !fuzzySearch;
+  document.getElementById("fuzzyToggle").classList.toggle("active", fuzzySearch);
+  document.getElementById("fuzzyToggle").setAttribute("aria-pressed", String(fuzzySearch));
+  document.getElementById("search").placeholder = fuzzySearch
+    ? "Fuzzy search (match all words in any order)..."
+    : "Search tabs (title, URL, domain)...";
+  render();
+});
+
 // Ignored panel toggle
 document.getElementById("toggleIgnoredPanel").addEventListener("click", () => {
   const panel = document.getElementById("ignoredPanel");
@@ -882,19 +1001,23 @@ function applyFaviconSize(size) {
   document.documentElement.style.setProperty("--favicon-size", `${size}px`);
 }
 
-faviconSlider.addEventListener("input", () => {
+faviconSlider.addEventListener("input", async () => {
   const size = faviconSlider.value;
   applyFaviconSize(size);
-  api.storage.local.set({ faviconSize: Number(size) });
+  try {
+    await api.storage.local.set({ faviconSize: Number(size) });
+  } catch (error) {
+    reportError(`Could not save favicon size: ${error.message}`);
+  }
 });
 
 // Restore saved favicon size
 api.storage.local.get("faviconSize").then((result) => {
   if (result.faviconSize) applyFaviconSize(result.faviconSize);
-});
+}).catch((error) => reportError(`Could not load favicon size: ${error.message}`));
 
 // Refresh
-document.getElementById("refresh").addEventListener("click", loadTabs);
+document.getElementById("refresh").addEventListener("click", refreshTabs);
 
 // Keyboard shortcut: Escape clears search
 document.addEventListener("keydown", (e) => {
@@ -907,5 +1030,75 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+// --- Most-recent session recovery ---
+
+function updateUndoToastSpace() {
+  // Notification replacement/wrapping can invalidate an already open menu.
+  // Reuse focus-safe dismissal; never move focus from unrelated controls.
+  closeRowMenus();
+  const toast = document.getElementById("undo-toast");
+  const style = getComputedStyle(toast);
+  // Keep the final row above the fixed notice, including wrapped/zoomed layouts.
+  const height = toast.hidden ? 0 : toast.offsetHeight + parseFloat(style.bottom) + parseFloat(style.rowGap);
+  document.getElementById("undo-toast-status").style.height = `${height}px`;
+}
+
+const undoToastObserver = new ResizeObserver(updateUndoToastSpace);
+undoToastObserver.observe(document.getElementById("undo-toast"));
+
+function showUndoToast(message) {
+  const toast = document.getElementById("undo-toast");
+  const msgEl = document.getElementById("undo-toast-msg");
+  const btn = document.getElementById("undo-toast-btn");
+
+  toast.hidden = false;
+  msgEl.textContent = message;
+
+  // Replace button to clear old listeners, preserving only its current focus.
+  const hadFocus = document.activeElement === btn;
+  const newBtn = btn.cloneNode(true);
+  newBtn.disabled = false;
+  newBtn.setAttribute("aria-disabled", "false");
+  btn.replaceWith(newBtn);
+  if (hadFocus) newBtn.focus({ preventScroll: true });
+  newBtn.textContent = "Restore most recently closed tab/window";
+  newBtn.title = "The browser chooses the session; this is not an undo of this batch.";
+  updateUndoToastSpace();
+
+  let restoring = false;
+  newBtn.addEventListener("click", async () => {
+    if (restoring) return;
+    restoring = true;
+    // Native disabled can blur a focused button before the request settles.
+    newBtn.setAttribute("aria-disabled", "true");
+    document.getElementById("bulkError").textContent = "";
+    try {
+      await sendCommand({ type: "restoreTab" });
+      if (document.getElementById("undo-toast-btn") === newBtn) {
+        if (document.activeElement === newBtn) {
+          document.getElementById("search").focus();
+        }
+        toast.hidden = true;
+        updateUndoToastSpace();
+        newBtn.disabled = true;
+      }
+    } catch (error) {
+      if (document.getElementById("undo-toast-btn") === newBtn) {
+        reportError(`Could not restore most recent session: ${error.message}`);
+        restoring = false;
+        newBtn.setAttribute("aria-disabled", "false");
+      }
+    } finally {
+      try {
+        await loadTabs();
+      } catch (error) {
+        if (document.getElementById("undo-toast-btn") === newBtn) {
+          reportError(`Could not refresh tabs: ${error.message}`);
+        }
+      }
+    }
+  });
+}
+
 // --- Init ---
-loadTabs();
+refreshTabs();
