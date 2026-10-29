@@ -425,7 +425,7 @@ tr.selected { background: rgba(138, 173, 244, 0.15); }
 .bulk-actions { margin-bottom: 12px; }
 .btn-close-selected { color: #ed8796; border-color: #ed8796; }
 button:disabled { opacity: 0.45; cursor: default; }
-#selectionStatus { color: #a5adcb; font-size: 12px; }
+#selectionStatus, #exportStatus { color: #a5adcb; font-size: 12px; }
 #bulkError { color: #ed8796; font-size: 12px; }
 
 .col-index { width: 50px; text-align: right; }

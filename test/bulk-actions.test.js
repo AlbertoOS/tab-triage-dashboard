@@ -16,6 +16,7 @@ function createElement() {
     appendChild(child) { this.children.push(child); },
     addEventListener(type, callback) { this.listeners[type] = callback; },
     setAttribute() {},
+    remove() {},
     querySelector(selector) {
       const className = selector.slice(1);
       for (const child of this.children) {
@@ -32,7 +33,20 @@ function createElement() {
 function createDashboard(tabs) {
   const elements = new Map();
   const messages = [];
+  const downloads = [];
+  const blobs = [];
+  const cleanupCallbacks = [];
+  const revokedUrls = [];
   const context = vm.createContext({
+    Blob,
+    URL: {
+      createObjectURL(blob) {
+        blobs.push(blob);
+        return `blob:test/${blobs.length}`;
+      },
+      revokeObjectURL(url) { revokedUrls.push(url); },
+    },
+    setTimeout(callback) { cleanupCallbacks.push(callback); },
     browser: {
       runtime: {
         getURL: () => dashboardUrl,
@@ -43,11 +57,16 @@ function createDashboard(tabs) {
       },
     },
     document: {
+      body: createElement(),
       getElementById: (id) => {
         if (!elements.has(id)) elements.set(id, createElement());
         return elements.get(id);
       },
-      createElement,
+      createElement: (tag) => {
+        const element = createElement();
+        if (tag === "a") element.click = () => downloads.push({ href: element.href, filename: element.download });
+        return element;
+      },
       querySelectorAll: () => [],
     },
     fixtureTabs: tabs.map((tab) => ({
@@ -67,8 +86,65 @@ function createDashboard(tabs) {
     loadTabs = async () => {};
     document.getElementById("groupBy").value = "none";
   `, context);
-  return { context, elements, messages, run: (code) => vm.runInContext(code, context) };
+  return {
+    context, elements, messages, downloads, blobs, cleanupCallbacks, revokedUrls,
+    run: (code) => vm.runInContext(code, context),
+  };
 }
+
+describe("link export", () => {
+  it("exports selected links in sort order, preserves duplicates and selection", async () => {
+    const app = createDashboard([
+      { id: 1, title: "Z", url: "https://example.com/z" },
+      { id: 2, title: "A", url: "https://example.com/a?q=%C3%A9#section" },
+      { id: 3, title: "B", url: "https://example.com/a?q=%C3%A9#section" },
+      { id: 4, title: "Not selected" },
+    ]);
+    app.run(`selectedTabIds = new Set([1, 2, 3]);
+      currentSort = [{ key: "title", dir: "asc" }]; exportLinks(true);`);
+    assert.equal(await app.blobs[0].text(),
+      "https://example.com/a?q=%C3%A9#section\nhttps://example.com/a?q=%C3%A9#section\nhttps://example.com/z\n");
+    assert.equal(app.blobs[0].type, "text/plain;charset=utf-8");
+    assert.equal(app.downloads[0].filename, "tab-links-selected.txt");
+    assert.deepEqual(Array.from(app.run("selectedTabIds")), [1, 2, 3]);
+    assert.equal(app.messages.length, 0);
+    assert.equal(app.revokedUrls.length, 0);
+    app.cleanupCallbacks[0]();
+    assert.deepEqual(app.revokedUrls, [app.downloads[0].href]);
+  });
+
+  it("exports all open links regardless of filters, excluding dashboards and empty URLs", async () => {
+    const app = createDashboard([
+      { id: 1, url: "https://visible.com" },
+      { id: 2, url: "https://hidden.com" },
+      { id: 3, url: `${dashboardUrl}#top` },
+      { id: 4, url: "" },
+      { id: 5, url: undefined },
+    ]);
+    app.run("fixtureTabs = fixtureTabs.slice(0, 1); exportLinks(false);");
+    assert.equal(await app.blobs[0].text(), "https://visible.com\nhttps://hidden.com\n");
+    assert.equal(app.downloads[0].filename, "tab-links-all.txt");
+  });
+
+  it("does not export hidden selections or create an empty download", () => {
+    const app = createDashboard([{ id: 1 }, { id: 2 }]);
+    app.run("selectedTabIds.add(2); fixtureTabs = fixtureTabs.slice(0, 1); exportLinks(true);");
+    assert.equal(app.downloads.length, 0);
+    assert.equal(app.elements.get("exportSelected").disabled, true);
+    assert.equal(app.elements.get("exportAll").disabled, false);
+    assert.equal(app.elements.get("exportStatus").textContent, "No links to export.");
+  });
+
+  it("reports download preparation errors without changing the selection", () => {
+    const app = createDashboard([{ id: 1 }]);
+    app.run(`selectedTabIds.add(1);
+      URL.createObjectURL = () => { throw new Error("Download unavailable"); };
+      exportLinks(true);`);
+    assert.match(app.elements.get("exportStatus").textContent, /Download unavailable/);
+    assert.deepEqual(Array.from(app.run("selectedTabIds")), [1]);
+    assert.equal(app.downloads.length, 0);
+  });
+});
 
 describe("bulk tab selection", () => {
   it("selects every filtered tab in collapsed groups and excludes dashboards", () => {

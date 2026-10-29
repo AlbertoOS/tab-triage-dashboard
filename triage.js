@@ -207,6 +207,48 @@ function updateSelectionControls(tabs = getFilteredTabs()) {
   closeButton.disabled = closingSelected || count === 0;
   closeButton.textContent = closingSelected ? `Closing ${count} tabs...` : `Close selected (${count})`;
   document.getElementById("selectionStatus").textContent = `${count} tabs selected`;
+  document.getElementById("exportSelected").disabled = closingSelected ||
+    !tabs.some((tab) => selectedTabIds.has(tab.id) && hasExportableUrl(tab));
+  document.getElementById("exportAll").disabled = closingSelected || !enrichedTabs.some(hasExportableUrl);
+}
+
+function hasExportableUrl(tab) {
+  return isSelectableTab(tab) && typeof tab.url === "string" && tab.url.trim().length > 0;
+}
+
+function exportLinks(selectedOnly) {
+  const filtered = getFilteredTabs();
+  syncSelection(filtered);
+  updateSelectionControls(filtered);
+  const tabs = selectedOnly ? filtered.filter((tab) => selectedTabIds.has(tab.id)) : enrichedTabs;
+  const urls = sortTabs(tabs).filter(hasExportableUrl).map((tab) => tab.url);
+  const status = document.getElementById("exportStatus");
+  if (urls.length === 0) {
+    status.textContent = "No links to export.";
+    return;
+  }
+
+  let objectUrl;
+  try {
+    const blob = new Blob([urls.join("\n") + "\n"], { type: "text/plain;charset=utf-8" });
+    objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = `tab-links-${selectedOnly ? "selected" : "all"}.txt`;
+    link.hidden = true;
+    document.body.appendChild(link);
+    try {
+      link.click();
+    } finally {
+      link.remove();
+    }
+    status.textContent = `Export prepared: ${urls.length} links.`;
+  } catch (error) {
+    status.textContent = `Could not export links: ${error.message}`;
+  } finally {
+    // Allow the browser to start the download before releasing the blob.
+    if (objectUrl) setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+  }
 }
 
 function selectFilteredTabs(selected) {
@@ -710,6 +752,8 @@ document.getElementById("selectFiltered").addEventListener("click", () => select
 document.getElementById("clearSelection").addEventListener("click", () => selectFilteredTabs(false));
 document.getElementById("selectAllTabs").addEventListener("change", (e) => selectFilteredTabs(e.target.checked));
 document.getElementById("closeSelected").addEventListener("click", closeSelectedTabs);
+document.getElementById("exportSelected").addEventListener("click", () => exportLinks(true));
+document.getElementById("exportAll").addEventListener("click", () => exportLinks(false));
 
 // Sort on header click — three-state cycle: desc → asc → off
 // Multiple columns supported; click adds to sort, existing column cycles

@@ -32,6 +32,8 @@ Install from [Firefox Add-ons (AMO)](https://addons.mozilla.org/en-US/firefox/ad
 
 Filter and sort the tab list, then use **Select all filtered tabs** (or the checkbox in the table header) and **Close selected** to close the result in one batch. You can also select individual rows and clear the selection. Collapsed groups are included; dashboard tabs are excluded. Changing filters removes hidden tabs from the selection.
 
+Use **Export selected links** to save the selection, or **Export all links** to save all open tabs regardless of filters and ignore lists. Exports are plain text files with one URL per line in the current sort order, preserving duplicate URLs. Dashboard tabs and empty URLs are excluded. To export a filtered result, select all filtered tabs and export the selection.
+
 Click the 🧐 icon in the toolbar to open the triage dashboard.
 
 ## Development
