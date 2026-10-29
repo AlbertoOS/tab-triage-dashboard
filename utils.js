@@ -12,7 +12,17 @@ function getDomain(url) {
 function normalizeUrl(url) {
   try {
     const u = new URL(url);
-    return (u.origin + u.pathname + u.search + u.hash).replace(/\/+$/, "");
+    return u.origin + u.pathname.replace(/\/+$/, "") + u.search + u.hash;
+  } catch {
+    return url;
+  }
+}
+
+// Preserve the fragment-insensitive keys already stored in ignore lists.
+function normalizeIgnoredUrl(url) {
+  try {
+    const u = new URL(url);
+    return (u.origin + u.pathname + u.search).replace(/\/+$/, "");
   } catch {
     return url;
   }

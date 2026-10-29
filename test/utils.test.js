@@ -38,6 +38,18 @@ describe("getDomain", () => {
 // --- normalizeUrl ---
 
 describe("normalizeUrl", () => {
+  it("strips only pathname trailing slashes, preserving query and hash bytes", () => {
+    for (const [url, expected] of [
+      ["https://example.com/path/?q=1#hash", "https://example.com/path?q=1#hash"],
+      ["https://example.com/path?q=/", "https://example.com/path?q=/"],
+      ["https://example.com/path#route/", "https://example.com/path#route/"],
+      ["https://example.com/path///?q=%2F/#route%2F/", "https://example.com/path?q=%2F/#route%2F/"],
+      ["https://example.com/#/route/", "https://example.com#/route/"],
+    ]) {
+      assert.equal(normalizeUrl(url), expected, url);
+    }
+  });
+
   it("normalizes URL to origin + pathname + search + hash", () => {
     assert.equal(
       normalizeUrl("https://example.com/path?q=1#hash"),
