@@ -124,9 +124,9 @@
     </div>
   </div>
 
-  <div id="undo-toast" class="undo-toast" hidden>
+  <div id="undo-toast" class="undo-toast" role="status" aria-live="polite" hidden>
     <span id="undo-toast-msg"></span>
-    <button id="undo-toast-btn" class="btn-undo">Undo</button>
+    <button id="undo-toast-btn" class="btn-undo" title="The browser chooses the session; this is not an undo of this batch.">Restore most recently closed tab/window</button>
   </div>
 
   <script src="utils.js"></script>

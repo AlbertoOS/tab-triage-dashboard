@@ -1,4 +1,9 @@
 :root {
+  --surface1: #363a4f;
+  --surface2: #494d64;
+  --text: #cad3f5;
+  --blue: #8aadf4;
+  --base: #24273a;
   --favicon-size: 16px;
 }
 

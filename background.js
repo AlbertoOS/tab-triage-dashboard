@@ -1,59 +1,61 @@
 // Tab Triage — background script
-// Opens the triage page on browser action click and provides tab data
-
 // Cross-browser compatibility: Firefox exposes `browser`, Chrome exposes `chrome`
 const api = globalThis.browser || chrome;
 
-api.action.onClicked.addListener(() => {
-  api.tabs.create({ url: api.runtime.getURL("triage.html") });
+api.action.onClicked.addListener(async () => {
+  try {
+    await api.tabs.create({ url: api.runtime.getURL("triage.html") });
+  } catch (error) {
+    console.error("Could not open Tab Triage:", error?.message || "Browser operation failed.");
+  }
 });
 
-// Respond to data requests from the triage page
+// Keep the message channel open; every supported command returns a structured result.
 api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg.type === "getTabs") {
-    api.tabs.query({}).then((tabs) => {
-      sendResponse({ tabs });
-    });
-    return true; // async response
+  const validId = (id) => Number.isSafeInteger(id) && id >= 0;
+  const commands = ["getTabs", "goToTab", "closeTab", "closeTabs", "discardTab", "restoreTab"];
+  if (!msg || typeof msg !== "object" || !commands.includes(msg.type) ||
+      (["closeTab", "discardTab", "goToTab"].includes(msg.type) && !validId(msg.tabId)) ||
+      (msg.type === "goToTab" && !validId(msg.windowId)) ||
+      (msg.type === "closeTabs" && (!Array.isArray(msg.tabIds) || !msg.tabIds.every(validId)))) {
+    sendResponse({ ok: false, error: "Invalid command or arguments." });
+    return false;
   }
-  if (msg.type === "goToTab") {
-    api.tabs.update(msg.tabId, { active: true });
-    api.windows.update(msg.windowId, { focused: true });
-  }
-  if (msg.type === "closeTab") {
-    api.tabs.remove(msg.tabId).then(() => sendResponse({ ok: true }));
-    return true;
-  }
-  if (msg.type === "closeTabs") {
-    // Tabs may have been closed elsewhere since the dashboard was refreshed.
-    api.tabs.query({}).then(async (tabs) => {
-      const dashboardUrl = api.runtime.getURL("triage.html");
-      const requestedIds = new Set(msg.tabIds);
-      const tabIds = tabs
-        .filter((tab) => requestedIds.has(tab.id) &&
-          (tab.url || "").split(/[?#]/)[0] !== dashboardUrl)
-        .map((tab) => tab.id);
-      if (tabIds.length > 0) await api.tabs.remove(tabIds);
-      sendResponse({ ok: true });
-    }).catch((error) => sendResponse({ ok: false, error: error.message }));
-    return true;
-  }
-  if (msg.type === "discardTab") {
-    api.tabs.discard(msg.tabId).then(() => sendResponse({ ok: true }));
-    return true;
-  }
-  if (msg.type === "restoreTab") {
-    api.sessions.restore().then(() => sendResponse({ ok: true }));
-    return true;
-  }
-  if (msg.type === "restoreTabs") {
-    const count = msg.count || 1;
-    (async () => {
-      for (let i = 0; i < count; i++) {
-        await api.sessions.restore();
+  (async () => {
+    switch (msg.type) {
+      case "getTabs":
+        return { ok: true, tabs: await api.tabs.query({}) };
+      case "goToTab":
+        await api.tabs.update(msg.tabId, { active: true });
+        await api.windows.update(msg.windowId, { focused: true });
+        break;
+      case "closeTab":
+        await api.tabs.remove(msg.tabId);
+        break;
+      case "closeTabs": {
+        // Tabs may have been closed elsewhere since the dashboard was refreshed.
+        const tabs = await api.tabs.query({});
+        const dashboardUrl = api.runtime.getURL("triage.html");
+        const requestedIds = new Set(msg.tabIds);
+        const tabIds = tabs
+          .filter((tab) => requestedIds.has(tab.id) &&
+            (tab.url || "").split(/[?#]/)[0] !== dashboardUrl)
+          .map((tab) => tab.id);
+        if (tabIds.length > 0) await api.tabs.remove(tabIds);
+        break;
       }
-      sendResponse({ ok: true });
-    })();
-    return true;
-  }
+      case "discardTab":
+        await api.tabs.discard(msg.tabId);
+        break;
+      case "restoreTab":
+        if (!api.sessions?.restore) throw new Error("Session restoration is unavailable.");
+        // The browser chooses the most recent session, which can be a whole window.
+        await api.sessions.restore();
+        break;
+    }
+    return { ok: true };
+  })().then(sendResponse).catch((error) => {
+    sendResponse({ ok: false, error: error?.message || "Browser operation failed." });
+  });
+  return true;
 });

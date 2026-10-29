@@ -17,9 +17,48 @@ let closingSelected = false;
 
 // --- Data ---
 
+async function sendCommand(message) {
+  const response = await api.runtime.sendMessage(message);
+  if (response?.ok !== true) throw new Error(response?.error || "Invalid browser response.");
+  return response;
+}
+
+function reportError(message) {
+  const status = document.getElementById("bulkError");
+  status.textContent = status.textContent ? `${status.textContent} ${message}` : message;
+}
+
+async function refreshTabs() {
+  document.getElementById("bulkError").textContent = "";
+  try {
+    await loadTabs();
+  } catch (error) {
+    reportError(`Could not refresh tabs: ${error.message}`);
+  }
+}
+
+async function runTabAction(message, successMessage) {
+  document.getElementById("bulkError").textContent = "";
+  document.getElementById("undo-toast").hidden = true;
+  try {
+    await sendCommand(message);
+    if (successMessage) showUndoToast(successMessage);
+  } catch (error) {
+    reportError(`Could not complete tab action: ${error.message}`);
+  } finally {
+    // Operations can partly succeed before the browser rejects them.
+    try {
+      await loadTabs();
+    } catch (error) {
+      reportError(`Could not refresh tabs: ${error.message}`);
+    }
+  }
+}
+
 async function loadTabs() {
   await loadIgnoreLists();
-  const response = await api.runtime.sendMessage({ type: "getTabs" });
+  const response = await sendCommand({ type: "getTabs" });
+  if (!Array.isArray(response.tabs)) throw new Error("Invalid tab response.");
   allTabs = response.tabs;
   enrichTabs();
   populateDomainFilter();
@@ -276,8 +315,7 @@ async function closeSelectedTabs() {
   document.getElementById("bulkError").textContent = "";
   render();
   try {
-    const response = await api.runtime.sendMessage({ type: "closeTabs", tabIds });
-    if (!response || !response.ok) throw new Error(response?.error || "Could not close selected tabs.");
+    await sendCommand({ type: "closeTabs", tabIds });
     selectedTabIds.clear();
   } catch (error) {
     document.getElementById("bulkError").textContent = `Could not close selected tabs: ${error.message}`;
@@ -285,7 +323,7 @@ async function closeSelectedTabs() {
     try {
       await loadTabs();
     } catch (error) {
-      document.getElementById("bulkError").textContent = `Could not refresh tabs: ${error.message}`;
+      reportError(`Could not refresh tabs: ${error.message}`);
     }
     closingSelected = false;
     render();
@@ -377,13 +415,15 @@ function createTabRow(tab) {
   titleTd.className = "col-title";
   const titleDiv = document.createElement("div");
   titleDiv.className = "tab-title";
-  if (tab.favIconUrl) {
-    const img = document.createElement("img");
-    img.className = "tab-favicon";
-    img.src = tab.favIconUrl;
-    img.onerror = function () { this.style.display = "none"; };
-    titleDiv.appendChild(img);
-  }
+  const img = document.createElement("img");
+  img.className = "tab-favicon";
+  img.alt = "";
+  img.src = tab.favIconUrl || "icons/icon-48.png";
+  img.onerror = () => {
+    img.onerror = null;
+    img.src = "icons/icon-48.png";
+  };
+  titleDiv.appendChild(img);
   const titleInner = document.createElement("div");
   const titleText = document.createElement("div");
   titleText.className = "tab-title-text";
@@ -506,9 +546,9 @@ function createTabRow(tab) {
   tr.appendChild(actionsTd);
 
   // Go button
-  tr.querySelector(".btn-goto").addEventListener("click", (e) => {
+  tr.querySelector(".btn-goto").addEventListener("click", async (e) => {
     e.stopPropagation();
-    api.runtime.sendMessage({
+    await runTabAction({
       type: "goToTab",
       tabId: tab.id,
       windowId: tab.windowId,
@@ -518,9 +558,7 @@ function createTabRow(tab) {
   // Close button
   tr.querySelector(".btn-close").addEventListener("click", async (e) => {
     e.stopPropagation();
-    await api.runtime.sendMessage({ type: "closeTab", tabId: tab.id });
-    showUndoToast(`Closed "${tab.title}"`, 1);
-    loadTabs();
+    await runTabAction({ type: "closeTab", tabId: tab.id }, `Closed "${tab.title}"`);
   });
 
   // Dedup button
@@ -534,9 +572,7 @@ function createTabRow(tab) {
         .filter((t) => t.id !== tab.id && normalizeUrl(t.url || "") === normUrl)
         .map((t) => t.id);
       if (dupeIds.length === 0) return;
-      await api.runtime.sendMessage({ type: "closeTabs", tabIds: dupeIds });
-      showUndoToast(`Closed ${dupeIds.length} duplicate tab${dupeIds.length > 1 ? "s" : ""}`, dupeIds.length);
-      loadTabs();
+      await runTabAction({ type: "closeTabs", tabIds: dupeIds }, "Duplicate close request completed.");
     });
   }
 
@@ -555,8 +591,7 @@ function createTabRow(tab) {
   // Discard tab button
   tr.querySelector(".btn-discard").addEventListener("click", async (e) => {
     e.stopPropagation();
-    await api.runtime.sendMessage({ type: "discardTab", tabId: tab.id });
-    loadTabs();
+    await runTabAction({ type: "discardTab", tabId: tab.id });
   });
 
   // More menu toggle
@@ -917,19 +952,23 @@ function applyFaviconSize(size) {
   document.documentElement.style.setProperty("--favicon-size", `${size}px`);
 }
 
-faviconSlider.addEventListener("input", () => {
+faviconSlider.addEventListener("input", async () => {
   const size = faviconSlider.value;
   applyFaviconSize(size);
-  api.storage.local.set({ faviconSize: Number(size) });
+  try {
+    await api.storage.local.set({ faviconSize: Number(size) });
+  } catch (error) {
+    reportError(`Could not save favicon size: ${error.message}`);
+  }
 });
 
 // Restore saved favicon size
 api.storage.local.get("faviconSize").then((result) => {
   if (result.faviconSize) applyFaviconSize(result.faviconSize);
-});
+}).catch((error) => reportError(`Could not load favicon size: ${error.message}`));
 
 // Refresh
-document.getElementById("refresh").addEventListener("click", loadTabs);
+document.getElementById("refresh").addEventListener("click", refreshTabs);
 
 // Keyboard shortcut: Escape clears search
 document.addEventListener("keydown", (e) => {
@@ -942,10 +981,10 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-// --- Undo toast ---
+// --- Most-recent session recovery ---
 let undoTimer = null;
 
-function showUndoToast(message, count) {
+function showUndoToast(message) {
   const toast = document.getElementById("undo-toast");
   const msgEl = document.getElementById("undo-toast-msg");
   const btn = document.getElementById("undo-toast-btn");
@@ -956,14 +995,29 @@ function showUndoToast(message, count) {
 
   // Replace button to clear old listeners
   const newBtn = btn.cloneNode(true);
+  newBtn.disabled = false;
   btn.replaceWith(newBtn);
+  newBtn.textContent = "Restore most recently closed tab/window";
+  newBtn.title = "The browser chooses the session; this is not an undo of this batch.";
 
   newBtn.addEventListener("click", async () => {
-    const type = count > 1 ? "restoreTabs" : "restoreTab";
-    await api.runtime.sendMessage({ type, count });
-    toast.hidden = true;
+    if (newBtn.disabled) return;
+    newBtn.disabled = true;
     clearTimeout(undoTimer);
-    loadTabs();
+    document.getElementById("bulkError").textContent = "";
+    try {
+      await sendCommand({ type: "restoreTab" });
+      toast.hidden = true;
+    } catch (error) {
+      reportError(`Could not restore most recent session: ${error.message}`);
+      newBtn.disabled = false;
+    } finally {
+      try {
+        await loadTabs();
+      } catch (error) {
+        reportError(`Could not refresh tabs: ${error.message}`);
+      }
+    }
   });
 
   undoTimer = setTimeout(() => {
@@ -972,4 +1026,4 @@ function showUndoToast(message, count) {
 }
 
 // --- Init ---
-loadTabs();
+refreshTabs();
