@@ -17,7 +17,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: store-firefox
+  group: store-firefox-${{ inputs.operation }}
   cancel-in-progress: false
 
 jobs:

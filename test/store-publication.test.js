@@ -23,6 +23,23 @@ test("store workflows admit only main dispatches and isolate credentials", () =>
   }
 });
 
+test("verification queues cannot replace publication queues and publication remains serialized", () => {
+  const groups = new Set();
+  for (const browser of ["firefox", "chrome"]) {
+    const text = fs.readFileSync(path.join(root, `.github/workflows/publish-${browser}.yml`), "utf8");
+    const template = text.match(/^  group: (.+)$/m)[1];
+    const resolve = (operation, tag) => template.replace(/\$\{\{\s*(.*?)\s*\}\}/g, (_, expression) => vm.runInNewContext(expression, { inputs: { operation, "release-tag": tag } }));
+    const publish = resolve("publish", "v1.0.0");
+    const verify = resolve("verify-release-only", "v1.0.0");
+    assert.notEqual(publish, verify, "verification must not replace pending publication");
+    assert.equal(publish, resolve("publish", "v2.0.0"), "all releases must share the same per-store publication lock");
+    assert.match(text, /cancel-in-progress: false/);
+    groups.add(publish);
+    groups.add(verify);
+  }
+  assert.equal(groups.size, 4, "each store and operation must have its own queue");
+});
+
 test("actual job guards reject every non-main dispatch credential context", () => {
   for (const browser of ["firefox", "chrome"]) {
     const text = fs.readFileSync(path.join(root, `.github/workflows/publish-${browser}.yml`), "utf8");

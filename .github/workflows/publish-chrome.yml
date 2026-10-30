@@ -17,7 +17,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: store-chrome
+  group: store-chrome-${{ inputs.operation }}
   cancel-in-progress: false
 
 jobs:
