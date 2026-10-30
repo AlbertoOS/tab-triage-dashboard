@@ -82,6 +82,13 @@ Run `npm run lint` to validate the extension with Mozilla's [addons-linter](http
 - **No `innerHTML` with dynamic content.** All DOM is built with `createElement`/`textContent`/`appendChild`. This is enforced by Firefox add-on validation.
 - `escapeHtml()` exists as a utility but should rarely be needed given DOM-based rendering.
 
+### Public Repository Hygiene
+- This repository is public and open source. Apply the same disclosure boundary to tracked files, fixtures, PR discussions, release notes, generated artifacts, and CI logs.
+- Never publish credentials, tokens, private keys, cookies, or real secrets in test fixtures. Keep credential-transfer scripts and operational state outside the repository.
+- Keep personal account details, local filesystem paths, private infrastructure identifiers, and raw operational transcripts out of public content. Use generic examples and GitHub environment variables or secrets for deployment-specific configuration.
+- Preserve functional identifiers that are intentionally public, such as the extension GUID; do not confuse non-secret identifiers with credentials or expose unnecessary personal deployment details.
+- Before every commit and push, review the exact changed/untracked/staged file inventory, the complete publication diff, and artifact/log output paths for sensitive information. A `.gitignore` entry or passing scanner alone is not proof of safe publication.
+
 ### Git
 - Conventional Commits: `type: description` (e.g., `feat:`, `fix:`, `docs:`)
 - Imperative mood in commit messages

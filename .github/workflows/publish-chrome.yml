@@ -1,0 +1,90 @@
+name: Publish chrome store
+
+on:
+  workflow_dispatch:
+    inputs:
+      release-tag:
+        description: Published stable GitHub release tag (vMAJOR.MINOR.PATCH)
+        required: true
+        type: string
+      operation:
+        description: Publish automatically, or verify release without store authentication
+        required: true
+        default: publish
+        type: choice
+        options: [publish, verify-release-only]
+
+permissions: {}
+
+concurrency:
+  group: store-chrome
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.ref_type == 'branch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify published release and exact tagged source (no store credentials)
+        run: python3 -B scripts/store_publish.py verify chrome
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release-tag }}
+          STORE_ASSETS: ${{ runner.temp }}/store-release
+  publish:
+    needs: verify
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.ref_type == 'branch' && inputs.operation == 'publish'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: chrome-release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Reverify release immediately before authentication
+        run: python3 -B scripts/store_publish.py verify chrome
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release-tag }}
+          STORE_ASSETS: ${{ runner.temp }}/store-release
+      - name: Require existing Chrome listing and keyless configuration before Google auth
+        run: python3 -B scripts/store_publish.py prerequisites chrome
+        env:
+          CWS_PUBLISHER_ID: ${{ vars.CWS_PUBLISHER_ID }}
+          CWS_EXTENSION_ID: ${{ vars.CWS_EXTENSION_ID }}
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/auth@v3
+        id: google-auth
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/chromewebstore
+          access_token_lifetime: 1800s
+          create_credentials_file: false
+          export_environment_variables: false
+      - name: Upload verified package and read back store state
+        run: python3 -B scripts/store_publish.py publish chrome
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release-tag }}
+          STORE_ASSETS: ${{ runner.temp }}/store-release
+          CWS_PUBLISHER_ID: ${{ vars.CWS_PUBLISHER_ID }}
+          CWS_EXTENSION_ID: ${{ vars.CWS_EXTENSION_ID }}
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          CWS_ACCESS_TOKEN: ${{ steps.google-auth.outputs.access_token }}
