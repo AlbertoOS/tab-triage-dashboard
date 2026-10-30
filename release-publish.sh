@@ -138,10 +138,10 @@ fi
 
 if gh release view "$TAG" &> /dev/null; then
   echo "Release $TAG exists, uploading zips..."
-  gh release upload "$TAG" "$ZIP_FF" "$ZIP_CR" --clobber
+  gh release upload "$TAG" "$ZIP_FF" "$ZIP_CR" "$SCRATCH/assets/provenance.json" --clobber
 else
   echo "Creating GitHub release..."
-  gh release create "$TAG" "$ZIP_FF" "$ZIP_CR" \
+  gh release create "$TAG" "$ZIP_FF" "$ZIP_CR" "$SCRATCH/assets/provenance.json" \
     --verify-tag --title "$TAG" \
     --notes "$NOTES"
 fi

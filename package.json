@@ -9,6 +9,7 @@
     "zip:chrome": "bash build-zip.sh chrome",
     "lint": "bash build-zip.sh firefox && addons-linter tab-triage-dashboard-firefox.zip --boring --warnings-as-errors",
     "test": "node --test 'test/**/*.test.js'",
+    "test:stores": "node --test test/store-publication.test.js",
     "release": "bash release.sh",
     "release:publish": "bash release-publish.sh"
   },

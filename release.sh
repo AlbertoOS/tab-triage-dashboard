@@ -176,7 +176,7 @@ if command -v gh &> /dev/null && [ -f "$ZIP_FF" ]; then
     NOTES+=$(git log HEAD~1 --pretty=format:"- %s (%h)")
   fi
 
-  gh release create "v$NEW_VERSION" "$ZIP_FF" "$ZIP_CR" \
+  gh release create "v$NEW_VERSION" "$ZIP_FF" "$ZIP_CR" "$RELEASE_ASSETS/provenance.json" \
     --verify-tag --title "v$NEW_VERSION" \
     --notes "$NOTES"
 else

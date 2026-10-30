@@ -143,6 +143,7 @@ test("normal release attaches both freshly built tagged payloads and pushes only
   for (const browser of ["firefox", "chrome"]) fs.writeFileSync(path.join(f.dir, `tab-triage-dashboard-${browser}.zip`), "stale ZIP");
   ok(run("bash", ["release.sh"], f.dir, f.env, "y\n"));
   checkBoth(f.env.CAPTURE, "1.3.3", "// release candidate");
+  assert.ok(f.calls().some((call) => call[0] === "gh" && call[2] === "create" && call.some((arg) => arg.endsWith("/provenance.json"))), "normal release must attach provenance before release.published");
   const pushes = f.calls().filter((call) => call[0] === "git" && call[1] === "push");
   assert.ok(pushes.length > 0);
   assert.ok(pushes.every((call) => call.includes("--no-follow-tags") && !call.includes("--tags")));
@@ -195,7 +196,7 @@ test("legacy no-argument publishing safely rebuilds both assets for an existing 
   const f = fixture(t);
   ok(run("bash", [path.join(f.dir, "release-publish.sh")], f.env.HOME, { ...f.env, RELEASE_VIEW_STATUS: "0" }));
   checkBoth(f.env.CAPTURE, "1.3.2");
-  assert.ok(f.calls().some((call) => call[0] === "gh" && call[2] === "upload" && call[3] === "v1.3.2"));
+  assert.ok(f.calls().some((call) => call[0] === "gh" && call[2] === "upload" && call[3] === "v1.3.2" && call.some((arg) => arg.endsWith("/provenance.json"))), "retry publisher must attach provenance too");
   assert.equal(f.calls().filter((call) => call[0] === "npm").length, 0);
 });
 
