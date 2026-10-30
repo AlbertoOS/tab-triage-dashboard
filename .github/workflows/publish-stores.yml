@@ -26,10 +26,17 @@ jobs:
           if not re.fullmatch(r"v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", tag):
               raise SystemExit("Release tag must be stable semver.")
           repo = os.environ["GITHUB_REPOSITORY"]
+          failures = []
           for browser in ("firefox", "chrome"):
               payload = json.dumps({"ref": "main", "inputs": {"release-tag": tag, "operation": "publish"}})
-              result = subprocess.run(["gh", "api", "--method", "POST", f"repos/{repo}/actions/workflows/publish-{browser}.yml/dispatches", "--input", "-"], input=payload, text=True, capture_output=True, timeout=60)
-              if result.returncode:
-                  raise SystemExit("Main store workflow dispatch failed; retry manually from main.")
+              try:
+                  result = subprocess.run(["gh", "api", "--method", "POST", f"repos/{repo}/actions/workflows/publish-{browser}.yml/dispatches", "--input", "-"], input=payload, text=True, capture_output=True, timeout=60)
+              except (subprocess.TimeoutExpired, OSError):
+                  failures.append(browser)
+              else:
+                  if result.returncode:
+                      failures.append(browser)
+          if failures:
+              raise SystemExit("Main store workflow dispatch failed for " + ", ".join(failures) + "; inspect runs before retrying the affected workflow manually from main.")
           print("Main publication workflows dispatched; inspect their runs for publication results.")
           PY

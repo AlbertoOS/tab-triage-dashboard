@@ -91,7 +91,39 @@ test("actual coordinator dispatches both main workflows with safe argv and propa
   const failure = run({ FAIL_DISPATCH: "1" });
   assert.notEqual(failure.status, 0);
   assert.doesNotMatch(failure.stdout + failure.stderr, /synthetic-sensitive-response/);
-  assert.equal(fs.readFileSync(log, "utf8").trim().split("\n").length, 1);
+  assert.equal(fs.readFileSync(log, "utf8").trim().split("\n").length, 2);
+  assert.match(failure.stderr, /firefox, chrome/);
+});
+
+test("actual coordinator attempts Chrome after Firefox timeout without leaking details", () => {
+  const text = fs.readFileSync(path.join(root, ".github/workflows/publish-stores.yml"), "utf8");
+  const embedded = text.split("python3 - <<'PY'\n")[1].split("\n          PY")[0].split("\n").map((line) => line.slice(10)).join("\n");
+  for (const kind of ["timeout", "oserror"]) {
+    const driver = `import json, subprocess
+attempts = []
+def dispatch(args, **kwargs):
+    attempts.append(args[4])
+    if len(attempts) == 1:
+        if ${JSON.stringify(kind)} == "timeout":
+            raise subprocess.TimeoutExpired(["synthetic-sensitive-response"], 60, output="synthetic-sensitive-response", stderr="synthetic-sensitive-response")
+        raise OSError("synthetic-sensitive-response")
+    return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+subprocess.run = dispatch
+try:
+    exec(${JSON.stringify(embedded)})
+finally:
+    print("DISPATCH_ATTEMPTS=" + json.dumps(attempts))
+`;
+    const result = spawnSync("python3", ["-B", "-c", driver], {
+      cwd: root, encoding: "utf8",
+      env: { ...process.env, GH_TOKEN: "synthetic-not-a-token", GITHUB_REPOSITORY: "owner/repo", RELEASE_TAG: "v1.0.0" },
+    });
+    assert.notEqual(result.status, 0);
+    const attempts = JSON.parse(result.stdout.match(/DISPATCH_ATTEMPTS=(.*)/)[1]);
+    assert.deepEqual(attempts, ["repos/owner/repo/actions/workflows/publish-firefox.yml/dispatches", "repos/owner/repo/actions/workflows/publish-chrome.yml/dispatches"]);
+    assert.doesNotMatch(result.stdout + result.stderr, /synthetic-sensitive-response|Traceback/);
+    assert.match(result.stderr, /failed for firefox;/);
+  }
 });
 
 test("offline store publication integration suite", () => {
