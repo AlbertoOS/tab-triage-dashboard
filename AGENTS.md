@@ -89,6 +89,10 @@ Run `npm run lint` to validate the extension with Mozilla's [addons-linter](http
 - Preserve functional identifiers that are intentionally public, such as the extension GUID; do not confuse non-secret identifiers with credentials or expose unnecessary personal deployment details.
 - Before every commit and push, review the exact changed/untracked/staged file inventory, the complete publication diff, and artifact/log output paths for sensitive information. A `.gitignore` entry or passing scanner alone is not proof of safe publication.
 
+### GitHub Actions
+- Select the latest compatible publisher-maintained major tag (`@vN`) for external actions when creating or updating workflows. Major tags receive compatible updates, but do not advance to the next major automatically.
+- Verify current publisher releases, the target tag's inputs, and runner/runtime requirements before upgrading. Preserve existing authentication and publication boundaries; do not introduce commit-SHA pins or unversioned branches as the default.
+
 ### Git
 - Conventional Commits: `type: description` (e.g., `feat:`, `fix:`, `docs:`)
 - Imperative mood in commit messages
