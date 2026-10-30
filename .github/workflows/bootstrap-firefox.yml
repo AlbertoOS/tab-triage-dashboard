@@ -1,0 +1,29 @@
+name: Bootstrap Firefox publication
+
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/bootstrap-firefox.yml"]
+
+permissions: {}
+
+jobs:
+  bootstrap:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.ref_type == 'branch' && github.run_attempt == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Attempt the one-time Firefox dispatch
+        run: python3 -B scripts/bootstrap_firefox.py
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOOTSTRAP_BEFORE: ${{ github.event.before }}
+          BOOTSTRAP_AFTER: ${{ github.event.after }}
