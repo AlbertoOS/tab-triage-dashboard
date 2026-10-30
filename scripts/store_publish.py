@@ -620,6 +620,8 @@ def chrome_state(status, version):
             )
             if state == "PUBLISHED":
                 return "public"
+            if state == "PUBLISHED_TO_TESTERS":
+                return "published-to-testers"
             if state == "PENDING_REVIEW":
                 return "submitted-for-review"
             if state == "STAGED":
@@ -648,9 +650,11 @@ def publish_chrome(receipt, expected, raw):
         version not in chrome_versions(status),
         "Chrome already has this version; API has no package digest/download. Refusing duplicate upload or unverifiable equal-version success; reconcile exact package in dashboard.",
     )
+    submission = status.get("submittedItemRevisionStatus")
+    # Rejected/cancelled historical revisions are not active submissions.
     require(
-        not status.get("submittedItemRevisionStatus"),
-        "Chrome has another active submission; do not replace it.",
+        submission is None or submission.get("state") in ("REJECTED", "CANCELLED"),
+        "Chrome has an active or unknown submission state; do not replace it.",
     )
     require(
         status.get("lastAsyncUploadState") != "IN_PROGRESS",

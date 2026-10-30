@@ -380,7 +380,7 @@ else:
             "CWS_EXTENSION_ID": "a" * 32,
             "CWS_ACCESS_TOKEN": "fake-secret-sentinel",
         }
-        status = {"name": name, "itemId": "a" * 32}
+        status: dict[str, object] = {"name": name, "itemId": "a" * 32}
         return name, env, status
 
     def test_chrome_equal_version_refuses_unverifiable_success(self):
@@ -441,6 +441,63 @@ else:
                 self.mod.publish_chrome({"version": "1.0.0"}, {}, b"zip")
         self.assertEqual(replies, [])
 
+    def test_chrome_terminal_previous_submission_allows_a_different_version(self):
+        for state in ("REJECTED", "CANCELLED"):
+            with self.subTest(state=state):
+                name, env, status = self.chrome_fixture()
+                previous = {
+                    **status,
+                    "submittedItemRevisionStatus": {
+                        "state": state,
+                        "distributionChannels": [{"crxVersion": "0.9.0"}],
+                    },
+                }
+                final = {
+                    **status,
+                    "publishedItemRevisionStatus": {
+                        "state": "PUBLISHED_TO_TESTERS",
+                        "distributionChannels": [{"crxVersion": "1.0.0"}],
+                    },
+                }
+                replies = [previous, {**status, "uploadState": "SUCCEEDED", "crxVersion": "1.0.0"}, {}, final]
+                calls = []
+
+                def transport(url, method="GET", *args, **kwargs):
+                    calls.append(method)
+                    return replies.pop(0)
+
+                with patch.dict(os.environ, env), patch.object(self.mod, "http", transport):
+                    result = self.mod.publish_chrome({"version": "1.0.0"}, {}, b"zip")
+                self.assertEqual(result, "published-to-testers")
+                self.assertEqual(calls, ["GET", "POST", "POST", "GET"])
+                self.assertEqual(replies, [])
+
+    def test_chrome_active_or_unknown_previous_submission_blocks_mutation(self):
+        for state in ("PENDING_REVIEW", "STAGED", "ITEM_STATE_UNSPECIFIED", "FUTURE_STATE", None):
+            with self.subTest(state=state):
+                name, env, status = self.chrome_fixture()
+                status["submittedItemRevisionStatus"] = {
+                    "state": state,
+                    "distributionChannels": [{"crxVersion": "0.9.0"}],
+                }
+                with patch.dict(os.environ, env), patch.object(self.mod, "http", return_value=status) as transport:
+                    with self.assertRaises(self.mod.Failure):
+                        self.mod.publish_chrome({"version": "1.0.0"}, {}, b"zip")
+                self.assertEqual(transport.call_count, 1)
+
+    def test_chrome_terminal_equal_version_still_blocks_mutation(self):
+        for state in ("REJECTED", "CANCELLED", "PUBLISHED_TO_TESTERS"):
+            with self.subTest(state=state):
+                name, env, status = self.chrome_fixture()
+                status["submittedItemRevisionStatus"] = {
+                    "state": state,
+                    "distributionChannels": [{"crxVersion": "1.0.0"}],
+                }
+                with patch.dict(os.environ, env), patch.object(self.mod, "http", return_value=status) as transport:
+                    with self.assertRaisesRegex(self.mod.Failure, "unverifiable equal-version"):
+                        self.mod.publish_chrome({"version": "1.0.0"}, {}, b"zip")
+                self.assertEqual(transport.call_count, 1)
+
     def test_live_tag_drift_stops_chrome_before_upload(self):
         self.fence.stop()
         name, env, status = self.chrome_fixture()
@@ -495,6 +552,7 @@ else:
         for state, result in [
             ("PENDING_REVIEW", "submitted-for-review"),
             ("PUBLISHED", "public"),
+            ("PUBLISHED_TO_TESTERS", "published-to-testers"),
             ("STAGED", "staged-not-public"),
         ]:
             status = {
