@@ -65,6 +65,7 @@ npm install
 | `npm run zip` | Build separate `tab-triage-dashboard-firefox.zip` and `tab-triage-dashboard-chrome.zip` archives |
 | `npm run release` | Full release: bump version, lint, zip, tag, push, GitHub release |
 | `npm run release:publish` | Create/update GitHub release for the latest tag |
+| `npm run test:stores` | Run credential-free store publication checks (Python 3.10+ and Git) |
 
 ### Packaging and release retries
 
@@ -85,9 +86,9 @@ artifact_dir=$(mktemp -d "${TMPDIR:-/tmp}/tab-triage-artifacts.XXXXXX")
 bash release-publish.sh "$TAG" --build-only "$artifact_dir"
 ```
 
-Both release paths always rebuild **both** browser archives from a pinned tag commit exported with `git archive` into private scratch. They ignore cached ZIPs and current dirty/untracked files, use the maintained builder rather than executing historical scripts, and reject tag/source version mismatches, missing distribution inputs, symlinks, and export transformations. `--build-only` also saves `provenance.json` with the selected tag object, commit, version, and SHA-256 hashes of both ZIPs; keep it alongside the inspected assets. The output directory must already exist. Scratch is removed on normal exit; forced termination may leave it behind. This is source-provenance checking, not tag-signature verification or a promise of byte-reproducible ZIP timestamps.
+Both release paths always rebuild **both** browser archives from a pinned tag commit exported with `git archive` into private scratch. They ignore cached ZIPs and current dirty/untracked files, use the maintained builder rather than executing historical scripts, and reject tag/source version mismatches, missing distribution inputs, symlinks, and export transformations. `provenance.json` records the selected tag object, commit, version, and SHA-256 hashes of both ZIPs. Both publication paths attach it to the GitHub Release; `--build-only` saves it alongside the inspected assets. The output directory must already exist. Scratch is removed on normal exit; forced termination may leave it behind. This is source-provenance checking, not tag-signature verification or a promise of byte-reproducible ZIP timestamps.
 
-The full `npm run release` flow still prompts, bumps versions, validates, commits, and tags; its publishable assets now use that same tag-based build-only path. It does not publish to browser stores. A packaging failure after tagging can leave a local release commit/tag for an explicit retry; it is not rolled back automatically. Tags predating the dual-manifest/package layout cannot be rebuilt by this path.
+The full `npm run release` flow still prompts, bumps versions, validates, commits, and tags; its publishable assets now use that same tag-based build-only path. Publishing the GitHub Release automatically dispatches separate main-only browser-store workflows; see [Browser store publication](STORE_PUBLISHING.md) for setup, source verification, preflight-only runs and retry semantics. The local release script does not receive store credentials. A packaging failure after tagging can leave a local release commit/tag for an explicit retry; it is not rolled back automatically. Tags predating the dual-manifest/package layout cannot be rebuilt by this path.
 
 ### Linting
 

@@ -1,0 +1,42 @@
+name: Dispatch store publication
+
+on:
+  release:
+    types: [published]
+
+permissions: {}
+
+jobs:
+  dispatch:
+    # Release events run at tags: this job has no environment or store credentials.
+    if: github.event_name == 'release' && github.event.action == 'published' && github.event.release.draft == false && github.event.release.prerelease == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch trusted main workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess
+          tag = os.environ["RELEASE_TAG"]
+          if not re.fullmatch(r"v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", tag):
+              raise SystemExit("Release tag must be stable semver.")
+          repo = os.environ["GITHUB_REPOSITORY"]
+          failures = []
+          for browser in ("firefox", "chrome"):
+              payload = json.dumps({"ref": "main", "inputs": {"release-tag": tag, "operation": "publish"}})
+              try:
+                  result = subprocess.run(["gh", "api", "--method", "POST", f"repos/{repo}/actions/workflows/publish-{browser}.yml/dispatches", "--input", "-"], input=payload, text=True, capture_output=True, timeout=60)
+              except (subprocess.TimeoutExpired, OSError):
+                  failures.append(browser)
+              else:
+                  if result.returncode:
+                      failures.append(browser)
+          if failures:
+              raise SystemExit("Main store workflow dispatch failed for " + ", ".join(failures) + "; inspect runs before retrying the affected workflow manually from main.")
+          print("Main publication workflows dispatched; inspect their runs for publication results.")
+          PY
