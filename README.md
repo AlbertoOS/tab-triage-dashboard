@@ -4,7 +4,7 @@ A Firefox and Chrome extension for managing and triaging your tabs with sorting,
 
 ## Features
 
-- **Multi-column sorting** — click columns to add sort layers (desc → asc → off), with priority indicators
+- **Multi-column sorting** — click columns to add sort layers (default direction → reverse → off), with priority indicators. Title and Domain start A–Z; Age starts oldest first.
 - **Checkbox filters** — combine multiple age buckets (OR) and status filters (AND)
 - **Domain multi-select** — searchable dropdown with checkboxes, select all/none
 - **Grouping** — by domain, window, age bucket, status, or duplicates — collapsible groups sorted by count
