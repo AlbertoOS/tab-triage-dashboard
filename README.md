@@ -109,6 +109,8 @@ Runs Mozilla's [addons-linter](https://github.com/mozilla/addons-linter) with wa
 
 The extension reads tab titles, URLs, favicons, and status to render the dashboard. Preferences and ignore lists are stored locally in extension storage. It has no application backend or analytics and does not upload your tab list. Loading site favicons can cause browser network requests; unavailable icons are replaced with a bundled image. Link exports are local files you create, and they contain your browsing URLs, so review them before sharing.
 
+See the [privacy policy](PRIVACY.md) for data use, retention, site-icon requests and deletion details.
+
 ## License
 
 MIT
