@@ -189,6 +189,8 @@ class StorePublicationTest(unittest.TestCase):
             (b"0.0", b"1e-9999"),
             (b"1e-400", b"2e-400"),
             (b"-0.0", b"0.0"),
+            (b"-0", b"0"),
+            (b"-0", b"-0.0"),
         ]:
             expected = {"manifest.json": b'{"value":' + before + b"}"}
             changed = b'{"value":' + after + b"}"
@@ -206,6 +208,13 @@ class StorePublicationTest(unittest.TestCase):
                     {"manifest.json": b'{"value":' + before + b"}"},
                     signed=True,
                 )
+
+    def test_signed_manifest_preserves_integer_negative_zero(self):
+        self.mod.verify_zip(
+            archive([("manifest.json", b'{ "value": -0 }')]),
+            {"manifest.json": b'{"value":-0}'},
+            signed=True,
+        )
 
     def test_signed_manifest_rejects_non_utf8_serializations(self):
         valid = b'{"version":"1.0.0"}'

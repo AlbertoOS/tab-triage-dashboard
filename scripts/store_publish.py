@@ -148,6 +148,8 @@ def zip_entries(raw):
 
 
 def canonical_manifest(raw):
+    negative_integer_zero = object()
+
     def object_pairs(pairs):
         result = {}
         for key, value in pairs:
@@ -166,7 +168,13 @@ def canonical_manifest(raw):
         )
         return value
 
+    def exact_integer(token):
+        # JSON.parse preserves integer-spelled negative zero; Python int does not.
+        return negative_integer_zero if token == "-0" else int(token)
+
     def typed_value(value):
+        if value is negative_integer_zero:
+            return (int, 0, True)
         if type(value) is dict:
             return (dict, {key: typed_value(item) for key, item in value.items()})
         if type(value) is list:
@@ -181,6 +189,7 @@ def canonical_manifest(raw):
             object_pairs_hook=object_pairs,
             parse_constant=reject_constant,
             parse_float=exact_decimal,
+            parse_int=exact_integer,
         )
         require(type(value) is dict, "Manifest JSON must be an object.")
         # Type tags prevent bool/int equality; Decimal retains exact numeric values.
