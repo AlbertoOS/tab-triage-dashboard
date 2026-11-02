@@ -222,6 +222,30 @@ class ReleasePlanTests(unittest.TestCase):
         self.assertIn("/pull/44", notes)
         self.assertNotIn("chore(release)", notes)
 
+    def test_late_fix_after_preparation_preserves_supported_merge_contract(self):
+        self.git("checkout", "-b", "late-fix")
+        self.commit("feat: add search")
+        self.cli("prepare", "--base", self.base, "--write")
+        self.commit("chore(release): prepare versions")
+        self.commit("fix: preserve focus")
+        self.cli("check", "--base", self.base, "--head", "HEAD", "--pr-title", "feat: add search")
+        plan = json.loads(self.cli("prepare", "--base", self.base).stdout)
+        self.assertEqual(plan["version"], "1.5.0")
+        self.cli("pending", "--head", "HEAD", ok=False)
+
+        self.git("checkout", "main")
+        self.git("merge", "--no-ff", "late-fix", "-m", "Merge pull request #13 from example/late-fix")
+        merged = json.loads(self.cli("pending", "--head", "HEAD").stdout)["releases"]
+        self.assertEqual(merged[0]["version"], "1.5.0")
+        self.assertEqual(merged[0]["commit"], self.git("rev-parse", "HEAD"))
+
+        self.git("checkout", "-b", "squash-late-fix", self.base)
+        self.git("merge", "--squash", "late-fix")
+        self.commit("feat: add search (#13)")
+        squashed = json.loads(self.cli("pending", "--head", "HEAD").stdout)["releases"]
+        self.assertEqual(squashed[0]["version"], "1.5.0")
+        self.assertEqual(squashed[0]["commit"], self.git("rev-parse", "HEAD"))
+
     def test_check_title_cannot_hide_actual_pr_severity(self):
         self.versions("2.0.0")
         self.commit("refactor!: remove API")

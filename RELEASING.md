@@ -12,11 +12,13 @@ npm run release:prepare -- --base origin/main
 npm run release:prepare -- --base origin/main --write
 ```
 
-The first command previews the plan. `--write` updates only version metadata in `package.json`, `package-lock.json`, `manifest.firefox.json`, and `manifest.chrome.json`. It does not stage, commit, tag, push, create a release, or contact a store. Review and commit those changes on the same topic branch using the usual signed-commit workflow.
+The command without `--write` previews the plan. `--write` updates only version metadata in `package.json`, `package-lock.json`, `manifest.firefox.json`, and `manifest.chrome.json`. It does not stage, commit, tag, push, create a release, or contact a store. Review and commit those changes on the same topic branch using the usual signed-commit workflow.
 
 The analyzer reads full commit messages across the unreleased range. Breaking headers (`type!:`) and breaking-change footers select major; otherwise `feat` selects minor and `fix` selects patch. Other types alone do not release. A documentation-only HEAD can still release earlier unreleased fixes. Commit version metadata with a non-releasing type, such as `chore(release)`.
 
 Use a Conventional Commit PR title that preserves the highest classification of the PR's changes, including `!` for breaking changes. This retains the release meaning when squash merging. With merge commits, the individual commit messages remain in history. Rerun preparation when the target branch or the PR changes; CI rejects stale or inconsistent metadata instead of guessing.
+
+This release path supports **merge and squash only**, as enforced by the existing active `main` ruleset. Rebase merging is unsupported: it can turn intermediate PR version commits into main release boundaries and leave a later fix unprepared, even when the PR's final version is correct. Do not bypass that rule or enable rebase merging for `main` without changing and testing the planner's history contract.
 
 The **Release plan** check validates the candidate without publication credentials. Making it a required, up-to-date check is a repository-rules decision; adding a workflow alone does not enforce that rule. A post-merge mismatch stops release publication rather than bypassing protection or rewriting `main`.
 
