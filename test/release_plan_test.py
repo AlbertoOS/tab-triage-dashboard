@@ -424,6 +424,25 @@ class ReleasePlanTests(unittest.TestCase):
         self.cli("check", "--base", self.base, "--head", "HEAD", ok=False)
 
 
+    def test_prepare_rejects_non_string_lock_versions_before_any_source_write(self):
+        self.commit("fix: validate legacy lock metadata")
+        names = ("package.json", "package-lock.json", "manifest.firefox.json", "manifest.chrome.json")
+        original = {name: (self.repo / name).read_bytes() for name in names}
+        for lock_version in (1, 2, 3):
+            for value in ({}, {"nested": "1.4.0"}, [], None, True, 17):
+                with self.subTest(lock_version=lock_version, value=value):
+                    for name, raw in original.items():
+                        (self.repo / name).write_bytes(raw)
+                    lock = json.loads(original["package-lock.json"])
+                    lock["lockfileVersion"] = lock_version
+                    lock["version"] = value
+                    if lock_version >= 2:
+                        lock["packages"] = {"": {"version": "1.4.0"}}
+                    (self.repo / "package-lock.json").write_text(json.dumps(lock))
+                    before = {name: (self.repo / name).read_bytes() for name in names}
+                    self.cli("prepare", "--base", self.base, "--write", ok=False)
+                    self.assertEqual({name: (self.repo / name).read_bytes() for name in names}, before)
+
     def test_prepare_rejects_malformed_lock_before_any_write(self):
         self.commit("fix: new change")
         before = (self.repo / "package.json").read_bytes()

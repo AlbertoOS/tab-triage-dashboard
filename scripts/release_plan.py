@@ -136,6 +136,8 @@ def sources(repo, ref=None, legacy_lock=False) -> tuple[str, dict[str, str]]:
         raise PlanError("Expected a source version string")
     for name in SOURCES[1:]:
         if name == "package-lock.json" and legacy_lock:
+            if "version" in data[name] and not isinstance(data[name]["version"], str):
+                raise PlanError("Legacy lockfile root version must be absent or a string")
             continue
         if data[name].get("version") != version:
             raise PlanError("Version sources disagree")
