@@ -63,11 +63,14 @@ npm install
 |---|---|
 | `npm run lint` | Validate extension with Mozilla's addons-linter |
 | `npm run zip` | Build separate `tab-triage-dashboard-firefox.zip` and `tab-triage-dashboard-chrome.zip` archives |
-| `npm run release` | Full release: bump version, lint, zip, tag, push, GitHub release |
-| `npm run release:publish` | Create/update GitHub release for the latest tag |
+| `npm run release:prepare -- --base origin/main` | Preview version preparation for the original PR; add `--write` to update source metadata |
+| `npm run release` | Legacy interactive release: commits, tags, pushes and publishes |
+| `npm run release:publish` | Legacy recovery: pushes a selected tag and can replace GitHub Release assets |
 | `npm run test:stores` | Run credential-free store publication checks (Python 3.10+ and Git) |
 
 ### Packaging and release retries
+
+For normal delivery, follow [Releases](RELEASING.md): prepare versions in the original PR, then let the main workflow publish the exact merged source. The automatic path does not overwrite published assets. The legacy commands below have different mutation/retry semantics and are not automatic-release recovery commands.
 
 Packaging requires Node.js 24+, Bash, `zip`, and `unzip` (for the packaging tests). Tag-based builds also require Git and `tar`. Both source manifests and `package.json` must have exactly the same version; archives preserve that version without adding a Git commit-count suffix. Ordinary `npm run zip` packages the current source tree using the distribution allowlist.
 

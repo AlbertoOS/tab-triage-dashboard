@@ -1,7 +1,7 @@
 {
   "private": true,
   "name": "tab-triage-dashboard",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Triage your tabs — sort by age, filter by status, group by domain, and close duplicates. A bit of organization to a tab chaos. :)",
   "scripts": {
     "zip": "bash build-zip.sh all",
@@ -11,6 +11,7 @@
     "test": "node --test 'test/**/*.test.js'",
     "test:stores": "node --test test/store-publication.test.js",
     "release": "bash release.sh",
+    "release:prepare": "python3 -B scripts/release_plan.py prepare",
     "release:publish": "bash release-publish.sh"
   },
   "devDependencies": {
