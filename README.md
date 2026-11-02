@@ -48,7 +48,7 @@ The close notification offers **Restore most recently closed tab/window**. This 
 
 ### Prerequisites
 
-- Node.js 24+
+- Node.js 26 LTS (26.13.0 or newer within 26.x; see `.node-version`)
 - npm
 
 ### Setup
@@ -72,7 +72,7 @@ npm install
 
 For normal delivery, follow [Releases](RELEASING.md): prepare versions in the original PR, then let the main workflow publish the exact merged source. The automatic path does not overwrite published assets. The legacy commands below have different mutation/retry semantics and are not automatic-release recovery commands.
 
-Packaging requires Node.js 24+, Bash, `zip`, and `unzip` (for the packaging tests). Tag-based builds also require Git and `tar`. Both source manifests and `package.json` must have exactly the same version; archives preserve that version without adding a Git commit-count suffix. Ordinary `npm run zip` packages the current source tree using the distribution allowlist.
+Packaging requires Node.js 26 LTS, Bash, `zip`, and `unzip` (for the packaging tests). Tag-based builds also require Git and `tar`. Both source manifests and `package.json` must have exactly the same version; archives preserve that version without adding a Git commit-count suffix. Ordinary `npm run zip` packages the current source tree using the distribution allowlist.
 
 For release retries, select an existing local `[v]MAJOR.MINOR.PATCH` tag explicitly:
 
