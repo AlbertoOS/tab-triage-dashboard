@@ -19,6 +19,7 @@ permissions: {}
 concurrency:
   group: store-chrome-${{ inputs.operation }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   verify:
