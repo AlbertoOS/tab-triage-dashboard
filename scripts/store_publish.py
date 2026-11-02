@@ -145,6 +145,28 @@ def zip_entries(raw):
     return entries
 
 
+def canonical_manifest(raw):
+    def object_pairs(pairs):
+        result = {}
+        for key, value in pairs:
+            require(key not in result, "Manifest JSON has duplicate keys.")
+            result[key] = value
+        return result
+
+    def reject_constant(value):
+        raise Failure("Manifest JSON contains a non-finite number.")
+
+    try:
+        value = json.loads(
+            raw.decode("utf-8"), object_pairs_hook=object_pairs, parse_constant=reject_constant
+        )
+        require(type(value) is dict, "Manifest JSON must be an object.")
+        # Canonical text preserves scalar types, unlike Python object equality.
+        return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    except (ValueError, UnicodeError, RecursionError):
+        raise Failure("Manifest JSON is invalid or contains a non-finite number.") from None
+
+
 def verify_zip(raw, expected, signed=False):
     entries = zip_entries(raw)
     # Directory metadata is not executable/content; permit only real parent directories.
@@ -160,7 +182,14 @@ def verify_zip(raw, expected, signed=False):
         elif signed and name in SIGNATURES:
             del entries[name]
     require(
-        entries == expected,
+        entries.keys() == expected.keys()
+        and (not signed or "manifest.json" in expected)
+        and all(
+            canonical_manifest(entries[name]) == canonical_manifest(data)
+            if signed and name == "manifest.json"
+            else entries[name] == data
+            for name, data in expected.items()
+        ),
         "Archive inventory/content differs from exact tagged Git blobs.",
     )
 
