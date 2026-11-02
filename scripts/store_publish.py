@@ -4,10 +4,12 @@ Never print subprocess/HTTP responses or exception text: those may contain secre
 """
 
 import base64
+from decimal import Decimal, DecimalException
 import hashlib
 import hmac
 import io
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -145,6 +147,57 @@ def zip_entries(raw):
     return entries
 
 
+def canonical_manifest(raw):
+    negative_integer_zero = object()
+
+    def object_pairs(pairs):
+        result = {}
+        for key, value in pairs:
+            require(key not in result, "Manifest JSON has duplicate keys.")
+            result[key] = value
+        return result
+
+    def reject_constant(value):
+        raise Failure("Manifest JSON contains a non-finite number.")
+
+    def exact_decimal(token):
+        value = Decimal(token)
+        require(
+            value.is_finite() and math.isfinite(float(value)),
+            "Manifest JSON contains a non-finite number.",
+        )
+        return value
+
+    def exact_integer(token):
+        # JSON.parse preserves integer-spelled negative zero; Python int does not.
+        return negative_integer_zero if token == "-0" else int(token)
+
+    def typed_value(value):
+        if value is negative_integer_zero:
+            return (int, 0, True)
+        if type(value) is dict:
+            return (dict, {key: typed_value(item) for key, item in value.items()})
+        if type(value) is list:
+            return (list, tuple(typed_value(item) for item in value))
+        if type(value) is Decimal and value.is_zero():
+            return (Decimal, value, value.is_signed())
+        return (type(value), value)
+
+    try:
+        value = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=object_pairs,
+            parse_constant=reject_constant,
+            parse_float=exact_decimal,
+            parse_int=exact_integer,
+        )
+        require(type(value) is dict, "Manifest JSON must be an object.")
+        # Type tags prevent bool/int equality; Decimal retains exact numeric values.
+        return typed_value(value)
+    except (ValueError, UnicodeError, RecursionError, DecimalException, OverflowError):
+        raise Failure("Manifest JSON is invalid or contains a non-finite number.") from None
+
+
 def verify_zip(raw, expected, signed=False):
     entries = zip_entries(raw)
     # Directory metadata is not executable/content; permit only real parent directories.
@@ -160,7 +213,14 @@ def verify_zip(raw, expected, signed=False):
         elif signed and name in SIGNATURES:
             del entries[name]
     require(
-        entries == expected,
+        entries.keys() == expected.keys()
+        and (not signed or "manifest.json" in expected)
+        and all(
+            canonical_manifest(entries[name]) == canonical_manifest(data)
+            if signed and name == "manifest.json"
+            else entries[name] == data
+            for name, data in expected.items()
+        ),
         "Archive inventory/content differs from exact tagged Git blobs.",
     )
 
