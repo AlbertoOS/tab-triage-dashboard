@@ -97,6 +97,162 @@ class StorePublicationTest(unittest.TestCase):
         with self.assertRaises(self.mod.Failure):
             self.mod.verify_zip(duplicate, expected)
 
+    def test_signed_manifest_allows_only_serialization_changes(self):
+        expected = {
+            "manifest.json": json.dumps({
+                "version": "1.0.0",
+                "name": "Triage café / tabs",
+                "permissions": ["tabs", "storage"],
+                "settings": {"enabled": True, "count": 1, "ratio": 1.0, "empty": None},
+            }, ensure_ascii=False).encode(),
+            "triage.js": b"safe",
+        }
+        reformatted = (
+            b'{\n "settings": {"empty": null, "ratio": 1.0, "count": 1, "enabled": true},'
+            b'\n "permissions": ["tabs", "storage"],'
+            b'\n "name": "Triage caf\\u00e9 \\/ tabs", "version": "1.0.0"\n}\n'
+        )
+        signed = archive([
+            ("manifest.json", reformatted),
+            ("triage.js", expected["triage.js"]),
+            ("META-INF/", b""),
+            *[(name, b"synthetic signature") for name in sorted(self.mod.SIGNATURES)],
+        ])
+        self.assertNotEqual(reformatted, expected["manifest.json"])
+        try:
+            self.mod.verify_zip(signed, expected, signed=True)
+        except self.mod.Failure as error:
+            self.fail(f"Signed manifest serialization-only changes were rejected: {error}")
+        with self.assertRaises(self.mod.Failure):
+            self.mod.verify_zip(
+                archive({**expected, "manifest.json": reformatted}.items()), expected
+            )
+
+    def test_signed_manifest_rejects_recursive_value_and_type_changes(self):
+        manifest = {
+            "version": "1.0.0",
+            "permissions": ["tabs", "storage"],
+            "settings": {"enabled": True, "count": 1, "ratio": 1.0, "empty": None},
+            "values": [False, 0, 0.0, "0", None],
+        }
+        expected = {"manifest.json": json.dumps(manifest).encode(), "triage.js": b"safe"}
+        changes = [
+            {**manifest, "version": "1.0.1"},
+            {**manifest, "permissions": ["tabs", "storage", "history"]},
+            {**manifest, "permissions": ["storage", "tabs"]},
+            {**manifest, "extra": None},
+            {key: value for key, value in manifest.items() if key != "settings"},
+            {**manifest, "permissions": {"tabs": True, "storage": True}},
+        ]
+        for key, value in [("enabled", 1), ("count", True), ("count", 1.0),
+                           ("ratio", 1), ("count", "1"), ("empty", False)]:
+            changes.append({**manifest, "settings": {**manifest["settings"], key: value}})
+        for index, value in enumerate([0, False, 0, 0, "null"]):
+            values = list(manifest["values"])
+            values[index] = value
+            changes.append({**manifest, "values": values})
+        for changed in changes:
+            with self.subTest(changed=changed), self.assertRaises(self.mod.Failure):
+                self.mod.verify_zip(
+                    archive({**expected, "manifest.json": json.dumps(changed)}.items()),
+                    expected,
+                    signed=True,
+                )
+
+    def test_signed_manifest_rejects_ambiguous_or_invalid_json_on_both_sides(self):
+        valid = b'{"version":"1.0.0","settings":{"count":1}}'
+        invalid = [
+            b'{"version":"wrong","version":"1.0.0","settings":{"count":1}}',
+            b'{"version":"1.0.0","settings":{"count":1,"co\\u0075nt":1}}',
+            b'{"version":"1.0.0","settings":{"count":NaN}}',
+            b'{"version":"1.0.0","settings":{"count":Infinity}}',
+            b'{"version":"1.0.0","settings":{"count":-Infinity}}',
+            b'{"version":"1.0.0","settings":{"count":1e9999}}',
+            b'{"version":"1.0.0",}',
+            b'{"version":"1.0.0"} trailing',
+            b'{"name":"\xff"}',
+            b'[]', b'null', b'"manifest"', b'1', b'true',
+        ]
+        for bad in invalid:
+            for actual, tagged in [(bad, valid), (valid, bad), (bad, bad)]:
+                with self.subTest(actual=actual, tagged=tagged):
+                    with self.assertRaises(self.mod.Failure):
+                        self.mod.verify_zip(
+                            archive([("manifest.json", actual)]),
+                            {"manifest.json": tagged},
+                            signed=True,
+                        )
+
+    def test_signed_manifest_rejects_lossy_numeric_collisions(self):
+        for before, after in [
+            (b"1.0", b"1.0000000000000001"),
+            (b"0.0", b"1e-9999"),
+            (b"1e-400", b"2e-400"),
+            (b"-0.0", b"0.0"),
+            (b"-0", b"0"),
+            (b"-0", b"-0.0"),
+        ]:
+            expected = {"manifest.json": b'{"value":' + before + b"}"}
+            changed = b'{"value":' + after + b"}"
+            with self.subTest(before=before, after=after):
+                with self.assertRaises(self.mod.Failure):
+                    self.mod.verify_zip(
+                        archive([("manifest.json", changed)]), expected, signed=True
+                    )
+
+    def test_signed_manifest_accepts_exact_decimal_equivalence(self):
+        for before, after in [(b"1.25", b"1.250"), (b"1e2", b"100.0")]:
+            with self.subTest(before=before, after=after):
+                self.mod.verify_zip(
+                    archive([("manifest.json", b'{"value":' + after + b"}")]),
+                    {"manifest.json": b'{"value":' + before + b"}"},
+                    signed=True,
+                )
+
+    def test_signed_manifest_preserves_integer_negative_zero(self):
+        self.mod.verify_zip(
+            archive([("manifest.json", b'{ "value": -0 }')]),
+            {"manifest.json": b'{"value":-0}'},
+            signed=True,
+        )
+
+    def test_signed_manifest_rejects_non_utf8_serializations(self):
+        valid = b'{"version":"1.0.0"}'
+        for encoding in ("utf-16", "utf-16-le", "utf-16-be", "utf-32"):
+            encoded = valid.decode("utf-8").encode(encoding)
+            for actual, tagged in [(encoded, valid), (valid, encoded), (encoded, encoded)]:
+                with self.subTest(encoding=encoding, actual=actual, tagged=tagged):
+                    with self.assertRaises(self.mod.Failure):
+                        self.mod.verify_zip(
+                            archive([("manifest.json", actual)]),
+                            {"manifest.json": tagged},
+                            signed=True,
+                        )
+
+    def test_signed_manifest_exception_preserves_other_bytes_and_inventory(self):
+        expected, raw, version = self.amo_fixture()
+        data = self.mod.zip_entries(raw)
+        data["manifest.json"] = b'{ "version": "1.0.0" }\n'
+        for changed in [
+            {**data, "triage.js": b"safe\n"},
+            {key: value for key, value in data.items() if key != "triage.js"},
+            {key: value for key, value in data.items() if key != "manifest.json"},
+            {**data, "extra.js": b"safe"},
+            {**data, "META-INF/unknown.sig": b"synthetic signature"},
+        ]:
+            with self.subTest(paths=sorted(changed)), self.assertRaises(self.mod.Failure):
+                self.mod.verify_zip(archive(changed.items()), expected, signed=True)
+
+    def test_amo_readback_accepts_reformatted_signed_manifest_offline(self):
+        expected, raw, version = self.amo_fixture(state="public")
+        data = self.mod.zip_entries(raw)
+        data["manifest.json"] = b'{ "version": "1.0.0" }\n'
+        signed = archive(data.items())
+        version["file"]["hash"] = "sha256:" + self.mod.digest(signed)
+        with patch.object(self.mod, "http", return_value=signed) as transport:
+            self.assertEqual(self.mod.amo_readback(version, expected), "public")
+        transport.assert_called_once_with(version["file"]["url"], binary=True)
+
     def fixture(self):
         temp = tempfile.TemporaryDirectory(prefix="store-publication-")
         self.addCleanup(temp.cleanup)
