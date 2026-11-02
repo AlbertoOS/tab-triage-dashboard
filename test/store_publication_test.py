@@ -183,6 +183,30 @@ class StorePublicationTest(unittest.TestCase):
                             signed=True,
                         )
 
+    def test_signed_manifest_rejects_lossy_numeric_collisions(self):
+        for before, after in [
+            (b"1.0", b"1.0000000000000001"),
+            (b"0.0", b"1e-9999"),
+            (b"1e-400", b"2e-400"),
+            (b"-0.0", b"0.0"),
+        ]:
+            expected = {"manifest.json": b'{"value":' + before + b"}"}
+            changed = b'{"value":' + after + b"}"
+            with self.subTest(before=before, after=after):
+                with self.assertRaises(self.mod.Failure):
+                    self.mod.verify_zip(
+                        archive([("manifest.json", changed)]), expected, signed=True
+                    )
+
+    def test_signed_manifest_accepts_exact_decimal_equivalence(self):
+        for before, after in [(b"1.25", b"1.250"), (b"1e2", b"100.0")]:
+            with self.subTest(before=before, after=after):
+                self.mod.verify_zip(
+                    archive([("manifest.json", b'{"value":' + after + b"}")]),
+                    {"manifest.json": b'{"value":' + before + b"}"},
+                    signed=True,
+                )
+
     def test_signed_manifest_rejects_non_utf8_serializations(self):
         valid = b'{"version":"1.0.0"}'
         for encoding in ("utf-16", "utf-16-le", "utf-16-be", "utf-32"):

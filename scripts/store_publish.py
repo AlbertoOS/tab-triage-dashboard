@@ -4,10 +4,12 @@ Never print subprocess/HTTP responses or exception text: those may contain secre
 """
 
 import base64
+from decimal import Decimal, DecimalException
 import hashlib
 import hmac
 import io
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -156,14 +158,34 @@ def canonical_manifest(raw):
     def reject_constant(value):
         raise Failure("Manifest JSON contains a non-finite number.")
 
+    def exact_decimal(token):
+        value = Decimal(token)
+        require(
+            value.is_finite() and math.isfinite(float(value)),
+            "Manifest JSON contains a non-finite number.",
+        )
+        return value
+
+    def typed_value(value):
+        if type(value) is dict:
+            return (dict, {key: typed_value(item) for key, item in value.items()})
+        if type(value) is list:
+            return (list, tuple(typed_value(item) for item in value))
+        if type(value) is Decimal and value.is_zero():
+            return (Decimal, value, value.is_signed())
+        return (type(value), value)
+
     try:
         value = json.loads(
-            raw.decode("utf-8"), object_pairs_hook=object_pairs, parse_constant=reject_constant
+            raw.decode("utf-8"),
+            object_pairs_hook=object_pairs,
+            parse_constant=reject_constant,
+            parse_float=exact_decimal,
         )
         require(type(value) is dict, "Manifest JSON must be an object.")
-        # Canonical text preserves scalar types, unlike Python object equality.
-        return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
-    except (ValueError, UnicodeError, RecursionError):
+        # Type tags prevent bool/int equality; Decimal retains exact numeric values.
+        return typed_value(value)
+    except (ValueError, UnicodeError, RecursionError, DecimalException, OverflowError):
         raise Failure("Manifest JSON is invalid or contains a non-finite number.") from None
 
 
