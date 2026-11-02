@@ -1,0 +1,117 @@
+name: Semantic release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+  workflow_dispatch:
+
+permissions: {}
+
+# Pending runs can be replaced; the main Git history is the durable backlog.
+concurrency:
+  group: semantic-release-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'main' }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Release plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ hashFiles('.node-version') == '' && '24' || '' }}
+          node-version-file: ${{ hashFiles('.node-version') && '.node-version' || '' }}
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run lint
+      - name: Validate the original PR version and squash classification
+        if: github.event_name == 'pull_request'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          git fetch --no-tags --no-prune --no-prune-tags --no-write-fetch-head --no-recurse-submodules --refmap= -- origin +refs/heads/main:refs/remotes/origin/main
+          python3 -B scripts/release_plan.py check --base refs/remotes/origin/main --head "$GITHUB_SHA" --pr-title "$PR_TITLE"
+      - name: Validate the durable main release backlog without publication
+        if: github.event_name != 'pull_request'
+        run: python3 -B scripts/release_plan.py pending --head "$GITHUB_SHA"
+
+  publish:
+    needs: validate
+    if: github.ref == 'refs/heads/main' && github.ref_type == 'branch' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    outputs:
+      tags: ${{ steps.result.outputs.tags }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ hashFiles('.node-version') == '' && '24' || '' }}
+          node-version-file: ${{ hashFiles('.node-version') && '.node-version' || '' }}
+      - name: Reconcile immutable tags, draft assets and published releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B scripts/release_publish.py --head "$GITHUB_SHA" --output "$RUNNER_TEMP/new-releases.json"
+      - name: Preserve confirmed publications even after a later failure
+        id: result
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, re
+          file = pathlib.Path(os.environ["RUNNER_TEMP"]) / "new-releases.json"
+          tags = json.loads(file.read_text()) if file.is_file() else []
+          if not isinstance(tags, list) or not all(isinstance(t, str) and re.fullmatch(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", t) for t in tags):
+              raise SystemExit("Invalid publication result.")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write("tags=" + json.dumps(tags) + "\n")
+          PY
+
+  dispatch-stores:
+    needs: publish
+    if: always() && github.ref == 'refs/heads/main' && github.ref_type == 'branch' && needs.publish.outputs.tags != '' && needs.publish.outputs.tags != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        tag: ${{ fromJSON(needs.publish.outputs.tags) }}
+    steps:
+      - name: Dispatch the credential-free main coordinator once
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ matrix.tag }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess
+          tag = os.environ["RELEASE_TAG"]
+          if not re.fullmatch(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", tag):
+              raise SystemExit("Invalid release tag.")
+          try:
+              result = subprocess.run(["gh", "api", "--method", "POST", f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/workflows/publish-stores.yml/dispatches", "--input", "-"], input=json.dumps({"ref": "main", "inputs": {"release-tag": tag}}), text=True, capture_output=True, timeout=60)
+              if result.returncode:
+                  raise SystemExit("Coordinator dispatch failed; inspect existing runs before retrying.")
+          except (subprocess.TimeoutExpired, OSError):
+              raise SystemExit("Coordinator dispatch outcome is uncertain; inspect existing runs before retrying.")
+          print("Store coordinator dispatched; this does not establish store submission or public availability.")
+          PY
