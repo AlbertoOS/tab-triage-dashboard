@@ -115,7 +115,14 @@ if case["sink"] in ("full", "native"):
     # Keep the real buffered stderr attached through interpreter shutdown.
     assert isinstance(sys.stderr, io.TextIOWrapper)
     assert isinstance(sys.stderr.buffer, io.BufferedWriter)
-    stderr_context = contextlib.nullcontext()
+    # Do not catch SystemExit or redirect stdout in native mode: CPython must
+    # handle the real fatal message and shutdown while stderr is still attached.
+    try:
+        exec(compile(case["source"], "workflow-dispatch", "exec"), {"__name__": "__main__"})
+    finally:
+        with open(case["report"], "w") as report:
+            json.dump({"calls": calls}, report)
+    raise SystemExit(0)
 else:
     stderr_context = contextlib.redirect_stderr(err)
 status = 0
@@ -125,7 +132,10 @@ with contextlib.redirect_stdout(out), stderr_context:
     except SystemExit as error:
         status = error.code if isinstance(error.code, int) else 1
         if not isinstance(error.code, int):
-            out.write(str(error.code))
+            try:
+                err.write(str(error.code) + "\\n")
+            except (OSError, ValueError):
+                pass
     except Exception as error:
         status = 99
         out.write(type(error).__name__)
@@ -146,12 +156,15 @@ print(json.dumps({"status": status, "stdout": out.getvalue(), "stderr": err.getv
       encoding: "utf8",
       stdio: ["pipe", "pipe", stderrFd ?? "pipe"],
       env: { PATH: process.env.PATH, PYTHONDONTWRITEBYTECODE: "1", TMPDIR: process.env.TMPDIR },
-      input: JSON.stringify({ source, outcomes, tag, sink, replies }),
+      input: JSON.stringify({ source, outcomes, tag, sink, replies, report: path.join(fixture, "calls.json") }),
     });
+    if (sink === "native" || sink === "full") {
+      assert.equal(result.error, undefined);
+      assert.equal(result.signal, null);
+      return { ...JSON.parse(fs.readFileSync(path.join(fixture, "calls.json"), "utf8")), status: result.status, stdout: result.stdout, stderr: result.stderr || "" };
+    }
     assert.equal(result.status, 0, `Workflow harness shutdown exit ${result.status}: ${result.stderr || result.stdout}`);
-    const observed = JSON.parse(result.stdout);
-    if (sink === "native") observed.stderr = result.stderr;
-    return observed;
+    return JSON.parse(result.stdout);
   } finally {
     if (stderrFd !== undefined) fs.closeSync(stderrFd);
     fs.rmSync(fixture, { recursive: true, force: true });
@@ -160,7 +173,18 @@ print(json.dumps({"status": status, "stdout": out.getvalue(), "stderr": err.getv
 
 function workflowRecords(result) {
   assert.doesNotMatch(result.stdout + result.stderr, /synthetic-private|owner\/repo|https?:\/\//);
-  return result.stderr.trim().split("\n").filter(Boolean).map((line) => {
+  const lines = result.stderr.trim().split("\n").filter(Boolean);
+  const expectedMessages = [
+    "Invalid release tag.",
+    "Release tag must be stable semver.",
+    "Coordinator dispatch failed; inspect existing runs before retrying.",
+    "Coordinator dispatch outcome is uncertain; inspect existing runs before retrying.",
+    ...["firefox", "chrome", "firefox, chrome"].map((browsers) => `Main store workflow dispatch not confirmed for ${browsers}; inspect runs before retrying the affected workflow manually from main.`),
+  ];
+  for (const line of lines) {
+    assert.ok(line.startsWith("Workflow diagnostic: ") || expectedMessages.includes(line), line);
+  }
+  return lines.filter((line) => line.startsWith("Workflow diagnostic: ")).map((line) => {
     assert.ok(line.startsWith("Workflow diagnostic: "), line);
     const record = JSON.parse(line.slice("Workflow diagnostic: ".length));
     assert.ok(["release-dispatch", "store-dispatch", "workflow-runtime"].includes(record.component));
@@ -217,8 +241,8 @@ test("embedded dispatch errors classify failure versus uncertainty and still att
           assert.ok(!("exit_code" in final[position]));
         }
         if (outcome === "timeout") {
-          assert.match(result.stdout, /uncertain|not confirmed/);
-          assert.doesNotMatch(result.stdout, /dispatch failed/);
+          assert.match(result.stderr, /uncertain|not confirmed/);
+          assert.doesNotMatch(result.stderr, /dispatch failed/);
         }
       }
     }
@@ -264,14 +288,52 @@ test("embedded dispatch survives native buffered stderr ENOSPC through shutdown"
     await t.test(workflow, () => {
       // /dev/full is an ENOSPC device; no diagnostic data is persisted.
       for (const outcome of [0, 7, "timeout", "start", "sigkill"]) {
-        const outcomes = workflow === "release" ? [outcome] : [outcome, 0];
-        const normal = exerciseDispatch(workflow, outcomes, { sink: "native" });
-        assert.ok(workflowRecords(normal).length > 0);
-        const full = exerciseDispatch(workflow, outcomes, { sink: "full" });
-        assert.equal(full.status, normal.status);
-        assert.equal(full.stdout, normal.stdout);
-        assert.deepEqual(full.calls, normal.calls);
+        for (const position of workflow === "stores" ? [0, 1] : [0]) {
+          const outcomes = workflow === "release" ? [outcome] : [0, 0];
+          outcomes[position] = outcome;
+          const normal = exerciseDispatch(workflow, outcomes, { sink: "native" });
+          assert.equal(normal.status, outcome === 0 ? 0 : 1);
+          const records = workflowRecords(normal);
+          assert.ok(records.length > 0);
+          const final = records.filter((record) => record.stage === "dispatch" && record.event !== "started");
+          assert.equal(final.length, outcomes.length);
+          assert.equal(final[position].event, outcome === 0 ? "succeeded" : outcome === 7 ? "failed" : outcome === "start" ? "process-start-failed" : "uncertain");
+          if (outcome === "sigkill") assert.equal(final[position].exit_code, -9);
+          if (outcome === "timeout" || outcome === "start") assert.ok(!("exit_code" in final[position]));
+          if (workflow === "stores") assert.equal(final[1 - position].event, "succeeded");
+          const messages = normal.stderr.split("\n").filter((line) => line && !line.startsWith("Workflow diagnostic: "));
+          const message = workflow === "stores"
+            ? `Main store workflow dispatch not confirmed for ${position === 0 ? "firefox" : "chrome"}; inspect runs before retrying the affected workflow manually from main.`
+            : outcome === 7
+              ? "Coordinator dispatch failed; inspect existing runs before retrying."
+              : "Coordinator dispatch outcome is uncertain; inspect existing runs before retrying.";
+          assert.deepEqual(messages, outcome === 0 ? [] : [message]);
+          assert.equal(normal.stdout, outcome === 0
+            ? workflow === "release"
+              ? "Store coordinator dispatched; this does not establish store submission or public availability.\n"
+              : "Main publication workflows dispatched; inspect their runs for publication results.\n"
+            : "");
+          assert.equal(normal.calls.length, outcomes.length);
+          assert.deepEqual(normal.calls.map((call) => call.argv[4].split("/").at(-2)), workflow === "release" ? ["publish-stores.yml"] : ["publish-firefox.yml", "publish-chrome.yml"]);
+          const full = exerciseDispatch(workflow, outcomes, { sink: "full" });
+          assert.equal(full.status, normal.status);
+          assert.equal(full.stdout, normal.stdout);
+          assert.deepEqual(full.calls, normal.calls);
+          assert.equal(full.stderr, "");
+        }
+      }
+      for (const tag of ["synthetic-private-tag\nvalue", "--option", "v01.0.0", "v1.0.0-rc.1"]) {
+        const normal = exerciseDispatch(workflow, [], { sink: "native", tag });
+        assert.equal(normal.status, 1);
+        assert.equal(normal.stdout, "");
+        assert.deepEqual(normal.calls, []);
+        assert.ok(workflowRecords(normal).some((record) => record.event === "rejected"));
+        assert.equal(normal.stderr.split("\n").filter((line) => line && !line.startsWith("Workflow diagnostic: ")).join("\n"), workflow === "release" ? "Invalid release tag." : "Release tag must be stable semver.");
+        const full = exerciseDispatch(workflow, [], { sink: "full", tag });
+        assert.equal(full.status, 1);
+        assert.equal(full.stdout, "");
         assert.equal(full.stderr, "");
+        assert.deepEqual(full.calls, []);
       }
     });
   }
@@ -354,8 +416,8 @@ test("signal-terminated dispatch is uncertain and preserves independent browser 
         const final = workflowRecords(result).filter((record) => record.stage === "dispatch" && record.event !== "started");
         assert.equal(final[position].event, "uncertain");
         assert.equal(final[position].exit_code, -9);
-        assert.match(result.stdout, /uncertain|not confirmed/);
-        assert.doesNotMatch(result.stdout, /dispatch failed/);
+        assert.match(result.stderr, /uncertain|not confirmed/);
+        assert.doesNotMatch(result.stderr, /dispatch failed/);
         if (workflow === "stores") {
           assert.equal(final[1 - position].event, "succeeded");
           assert.deepEqual(result.calls.map((call) => call.argv[4].split("/").at(-2)), ["publish-firefox.yml", "publish-chrome.yml"]);

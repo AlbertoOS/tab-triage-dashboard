@@ -158,22 +158,7 @@ jobs:
           python3 - <<'PY'
           import json, os, re, subprocess, sys
 
-          def emit(stage, event, **fields):
-              # Static call-site phases; project dynamic fields instead of logging raw data.
-              record = {"component": 'release-dispatch', "stage": stage, "event": event}
-              browser = fields.get("browser")
-              if browser in ("firefox", "chrome"):
-                  record["browser"] = browser
-              tag = fields.get("tag")
-              if isinstance(tag, str) and len(tag) <= 64 and re.fullmatch(r"v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", tag):
-                  record["tag"] = tag
-              code = fields.get("exit_code")
-              if type(code) is int and -(2**31) <= code < 2**31:
-                  record["exit_code"] = code
-              version = fields.get("python_version")
-              if isinstance(version, str) and re.fullmatch(r"[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}", version):
-                  record["python_version"] = version
-              line = "Workflow diagnostic: " + json.dumps(record, sort_keys=True) + "\n"
+          def write_line(line):
               try:
                   try:
                       fileno = getattr(sys.stderr, "fileno", None)
@@ -193,27 +178,49 @@ jobs:
               except (OSError, ValueError):
                   pass
 
+          def fail(message):
+              write_line(message + "\n")
+              raise SystemExit(1)
+
+          def emit(stage, event, **fields):
+              # Static call-site phases; project dynamic fields instead of logging raw data.
+              record = {"component": 'release-dispatch', "stage": stage, "event": event}
+              browser = fields.get("browser")
+              if browser in ("firefox", "chrome"):
+                  record["browser"] = browser
+              tag = fields.get("tag")
+              if isinstance(tag, str) and len(tag) <= 64 and re.fullmatch(r"v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", tag):
+                  record["tag"] = tag
+              code = fields.get("exit_code")
+              if type(code) is int and -(2**31) <= code < 2**31:
+                  record["exit_code"] = code
+              version = fields.get("python_version")
+              if isinstance(version, str) and re.fullmatch(r"[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}", version):
+                  record["python_version"] = version
+              line = "Workflow diagnostic: " + json.dumps(record, sort_keys=True) + "\n"
+              write_line(line)
+
           emit("runtime", "observed", python_version=".".join(str(n) for n in sys.version_info[:3]))
           tag = os.environ["RELEASE_TAG"]
           if not re.fullmatch(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", tag):
               emit("tag-validation", "rejected")
-              raise SystemExit("Invalid release tag.")
+              fail("Invalid release tag.")
           emit("tag-validation", "accepted", tag=tag)
           emit("dispatch", "started", tag=tag)
           try:
               result = subprocess.run(["gh", "api", "--method", "POST", f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/workflows/publish-stores.yml/dispatches", "--input", "-"], input=json.dumps({"ref": "main", "inputs": {"release-tag": tag}}), text=True, capture_output=True, timeout=60)
               if type(result.returncode) is int and result.returncode < 0:
                   emit("dispatch", "uncertain", tag=tag, exit_code=result.returncode)
-                  raise SystemExit("Coordinator dispatch outcome is uncertain; inspect existing runs before retrying.")
+                  fail("Coordinator dispatch outcome is uncertain; inspect existing runs before retrying.")
               if result.returncode:
                   emit("dispatch", "failed", tag=tag, exit_code=result.returncode)
-                  raise SystemExit("Coordinator dispatch failed; inspect existing runs before retrying.")
+                  fail("Coordinator dispatch failed; inspect existing runs before retrying.")
           except subprocess.TimeoutExpired:
               emit("dispatch", "uncertain", tag=tag)
-              raise SystemExit("Coordinator dispatch outcome is uncertain; inspect existing runs before retrying.")
+              fail("Coordinator dispatch outcome is uncertain; inspect existing runs before retrying.")
           except OSError:
               emit("dispatch", "process-start-failed", tag=tag)
-              raise SystemExit("Coordinator dispatch outcome is uncertain; inspect existing runs before retrying.")
+              fail("Coordinator dispatch outcome is uncertain; inspect existing runs before retrying.")
           emit("dispatch", "succeeded", tag=tag, exit_code=result.returncode)
           print("Store coordinator dispatched; this does not establish store submission or public availability.")
           PY
