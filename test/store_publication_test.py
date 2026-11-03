@@ -1182,7 +1182,7 @@ print(result)
         output, calls = io.StringIO(), []
         replies = [None, {"uuid": "1" * 32}, {
             "processed": True, "valid": False, "version": "1.0.0", "channel": "listed",
-            "validation": {"errors": ["synthetic-private-validation\n::error::injected"]},
+            "validation": {"errors": 2, "warnings": 3, "messages": [{"message": "synthetic-private-validation\n::error::injected"}]},
             "secret": "synthetic-private-provider-response",
         }]
 
@@ -1199,10 +1199,28 @@ print(result)
         self.assertEqual(validation[0]["processed"], True)
         self.assertEqual(validation[0]["valid"], False)
         self.assertEqual(validation[0]["version_matches"], True)
-        self.assertEqual(validation[0]["error_count"], 1)
+        self.assertEqual(validation[0]["error_count"], 2)
+        self.assertEqual(validation[0]["warning_count"], 3)
         self.assertEqual(calls, ["GET", "POST", "GET"])
         for sentinel in ("fake-secret", "fake-key", "synthetic-private", "::error::", "1" * 32):
             self.assertNotIn(sentinel, output.getvalue())
+
+    def test_firefox_validation_counts_accept_integer_wire_format_without_coercion(self):
+        for errors, warnings, expected in (
+            (2, 3, {"error_count": 2, "warning_count": 3}),
+            (0, 65535, {"error_count": 0, "warning_count": 65535}),
+            (-1, 65536, {"error_count": "unknown", "warning_count": "unknown"}),
+            (True, False, {}),
+            (2.0, "synthetic-private-count", {}),
+            (["synthetic-private-error"], ["synthetic-private-warning"], {"error_count": 1, "warning_count": 1}),
+        ):
+            with self.subTest(errors_type=type(errors).__name__, warnings_type=type(warnings).__name__):
+                output = io.StringIO()
+                with patch("sys.stderr", output):
+                    self.mod.firefox_diagnostic("validation", "response", "1.0.0", {"validation": {"errors": errors, "warnings": warnings, "messages": ["synthetic-private-message"]}})
+                record = json.loads(output.getvalue().removeprefix("Workflow diagnostic: "))
+                self.assertEqual({key: record[key] for key in ("error_count", "warning_count") if key in record}, expected)
+                self.assertNotIn("synthetic-private", output.getvalue())
 
     def test_amo_validation_failure_never_creates_version(self):
         replies = [

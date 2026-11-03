@@ -635,6 +635,8 @@ def firefox_diagnostic(stage, event, version, status=None):
                     values = validation.get(key)
                     if type(values) is list:
                         record["error_count" if key == "errors" else "warning_count"] = len(values) if len(values) <= 65535 else "unknown"
+                    elif type(values) is int:
+                        record["error_count" if key == "errors" else "warning_count"] = values if 0 <= values <= 65535 else "unknown"
         elif status is not None:
             record["schema"] = "unexpected"
     write_chrome_diagnostic("Workflow diagnostic: ", record)
