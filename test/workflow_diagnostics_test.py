@@ -179,10 +179,11 @@ class DiagnosticTests(unittest.TestCase):
             [sys.executable, "-B", "scripts/release_plan.py", "--help"],
         )
         for command in commands:
-            with self.subTest(command=command[2:]), open("/dev/full", "wb", buffering=0) as sink:
-                result = subprocess.run(command, cwd=ROOT, env={"PATH": os.environ["PATH"], "TMPDIR": os.environ["TMPDIR"]}, stdout=subprocess.PIPE, stderr=sink, text=True, timeout=15)
-            self.assertEqual(result.returncode, 0, result.stdout)
-            self.assertTrue(result.stdout)
+            with self.subTest(command=command[2:]):
+                with open("/dev/full", "wb", buffering=0) as sink:
+                    result = subprocess.run(command, cwd=ROOT, env={key: os.environ[key] for key in ("PATH", "TMPDIR") if key in os.environ}, stdout=subprocess.PIPE, stderr=sink, text=True, timeout=15)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertTrue(result.stdout)
 
     def test_sink_failures_are_best_effort_but_serialization_errors_are_not_hidden(
         self,

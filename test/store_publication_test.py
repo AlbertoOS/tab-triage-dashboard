@@ -782,7 +782,7 @@ assert not responses
 print(result)
 """
         with open("/dev/full", "wb", buffering=0) as sink:
-            result = subprocess.run([sys.executable, "-B", "-c", program], cwd=ROOT, env={"PATH": os.environ["PATH"], "TMPDIR": os.environ["TMPDIR"]}, stdout=subprocess.PIPE, stderr=sink, text=True, timeout=15)
+            result = subprocess.run([sys.executable, "-B", "-c", program], cwd=ROOT, env={key: os.environ[key] for key in ("PATH", "TMPDIR") if key in os.environ}, stdout=subprocess.PIPE, stderr=sink, text=True, timeout=15)
         self.assertEqual(result.stdout, "submitted-for-review\n")
         self.assertEqual(result.returncode, 0)
 
