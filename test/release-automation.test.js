@@ -6,6 +6,7 @@ const os = require("node:os");
 const path = require("node:path");
 const vm = require("node:vm");
 const root = path.resolve(__dirname, "..");
+const fullDeviceAvailable = fs.existsSync("/dev/full");
 
 function read(name) {
   return fs.readFileSync(path.join(root, name), "utf8");
@@ -283,7 +284,7 @@ test("embedded dispatch diagnostics tolerate unavailable stderr and omit unbound
   }
 });
 
-test("embedded dispatch survives native buffered stderr ENOSPC through shutdown", async (t) => {
+test("embedded dispatch checks native stderr and available ENOSPC faults through shutdown", async (t) => {
   for (const workflow of ["release", "stores"]) {
     await t.test(workflow, () => {
       // /dev/full is an ENOSPC device; no diagnostic data is persisted.
@@ -315,11 +316,13 @@ test("embedded dispatch survives native buffered stderr ENOSPC through shutdown"
             : "");
           assert.equal(normal.calls.length, outcomes.length);
           assert.deepEqual(normal.calls.map((call) => call.argv[4].split("/").at(-2)), workflow === "release" ? ["publish-stores.yml"] : ["publish-firefox.yml", "publish-chrome.yml"]);
-          const full = exerciseDispatch(workflow, outcomes, { sink: "full" });
-          assert.equal(full.status, normal.status);
-          assert.equal(full.stdout, normal.stdout);
-          assert.deepEqual(full.calls, normal.calls);
-          assert.equal(full.stderr, "");
+          if (fullDeviceAvailable) {
+            const full = exerciseDispatch(workflow, outcomes, { sink: "full" });
+            assert.equal(full.status, normal.status);
+            assert.equal(full.stdout, normal.stdout);
+            assert.deepEqual(full.calls, normal.calls);
+            assert.equal(full.stderr, "");
+          }
         }
       }
       for (const tag of ["synthetic-private-tag\nvalue", "--option", "v01.0.0", "v1.0.0-rc.1"]) {
@@ -329,11 +332,13 @@ test("embedded dispatch survives native buffered stderr ENOSPC through shutdown"
         assert.deepEqual(normal.calls, []);
         assert.ok(workflowRecords(normal).some((record) => record.event === "rejected"));
         assert.equal(normal.stderr.split("\n").filter((line) => line && !line.startsWith("Workflow diagnostic: ")).join("\n"), workflow === "release" ? "Invalid release tag." : "Release tag must be stable semver.");
-        const full = exerciseDispatch(workflow, [], { sink: "full", tag });
-        assert.equal(full.status, 1);
-        assert.equal(full.stdout, "");
-        assert.equal(full.stderr, "");
-        assert.deepEqual(full.calls, []);
+        if (fullDeviceAvailable) {
+          const full = exerciseDispatch(workflow, [], { sink: "full", tag });
+          assert.equal(full.status, 1);
+          assert.equal(full.stdout, "");
+          assert.equal(full.stderr, "");
+          assert.deepEqual(full.calls, []);
+        }
       }
     });
   }
@@ -382,7 +387,7 @@ test("runtime visibility executes installed-version probes with bounded safe pro
 });
 
 
-test("every runtime probe survives native buffered stderr ENOSPC through shutdown", async (t) => {
+test("every runtime probe checks native stderr and available ENOSPC faults through shutdown", async (t) => {
   for (const workflow of ["release", "publish-chrome", "publish-firefox"]) {
     const blocks = [...read(`.github/workflows/${workflow}.yml`).matchAll(/      - name: Report installed runtimes\n        run: \|\n          python3 - <<'PY'\n([\s\S]*?)\n          PY/g)];
     assert.equal(blocks.length, 2);
@@ -392,12 +397,16 @@ test("every runtime probe survives native buffered stderr ENOSPC through shutdow
         for (const outcomes of workflow === "release" ? [[0, 0], ["timeout", "start"], ["sigkill", 7]] : [[]]) {
           const options = { source, replies: ["v26.13.0\n", "11.6.0\n"] };
           const normal = exerciseDispatch("stores", outcomes, { ...options, sink: "native" });
+          assert.equal(normal.status, 0);
+          assert.equal(normal.stdout, "");
           assert.ok(workflowRecords(normal).length > 0);
-          const full = exerciseDispatch("stores", outcomes, { ...options, sink: "full" });
-          assert.equal(full.status, 0);
-          assert.equal(full.stdout, normal.stdout);
-          assert.deepEqual(full.calls, normal.calls);
-          assert.equal(full.stderr, "");
+          if (fullDeviceAvailable) {
+            const full = exerciseDispatch("stores", outcomes, { ...options, sink: "full" });
+            assert.equal(full.status, 0);
+            assert.equal(full.stdout, normal.stdout);
+            assert.deepEqual(full.calls, normal.calls);
+            assert.equal(full.stderr, "");
+          }
         }
       });
     }
