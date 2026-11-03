@@ -690,8 +690,8 @@ def publish_firefox(receipt, expected, raw):
         )
     fence(receipt)
     firefox_diagnostic("version_create", "start", version)
-    amo(base, "POST", {"upload": upload_id})
-    firefox_diagnostic("version_create", "response", version)
+    created = amo(base, "POST", {"upload": upload_id})
+    firefox_diagnostic("version_create", "response", version, created)
     # Always read back the exact version, not latest/current_version.
     for attempt in range(POLL_COUNT):
         firefox_diagnostic("readback", "start", version)

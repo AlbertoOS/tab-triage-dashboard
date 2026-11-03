@@ -762,9 +762,10 @@ else:
 
     @unittest.skipUnless(Path("/dev/full").exists(), "requires the ENOSPC sink device")
     def test_real_chrome_publication_keeps_exit_zero_with_full_stderr_device(self):
-        program = """import os, socket
+        program = """import os, socket, sys
+sys.path.insert(0,"test")
 from unittest.mock import patch
-from test.store_publication_test import StorePublicationTest
+from store_publication_test import StorePublicationTest
 socket.socket.connect=lambda *a,**k: (_ for _ in ()).throw(AssertionError("offline"))
 case=StorePublicationTest()
 case.setUp()
@@ -781,8 +782,13 @@ assert calls==["GET","POST","POST","GET"]
 assert not responses
 print(result)
 """
-        with open("/dev/full", "wb", buffering=0) as sink:
-            result = subprocess.run([sys.executable, "-B", "-c", program], cwd=ROOT, env={key: os.environ[key] for key in ("PATH", "TMPDIR") if key in os.environ}, stdout=subprocess.PIPE, stderr=sink, text=True, timeout=15)
+        with tempfile.TemporaryDirectory() as folder, open("/dev/full", "wb", buffering=0) as sink:
+            shadow = Path(folder) / "test"
+            shadow.mkdir()
+            (shadow / "__init__.py").write_text("# Simulate a concrete standard-library test package.\n")
+            env = {key: os.environ[key] for key in ("PATH", "TMPDIR") if key in os.environ}
+            env["PYTHONPATH"] = folder
+            result = subprocess.run([sys.executable, "-B", "-c", program], cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=sink, text=True, timeout=15)
         self.assertEqual(result.stdout, "submitted-for-review\n")
         self.assertEqual(result.returncode, 0)
 
@@ -1159,6 +1165,9 @@ print(result)
                         self.assertTrue(failures, "the selected post-write diagnostic must actually be attempted")
                     else:
                         records = [json.loads(line.removeprefix("Workflow diagnostic: ")) for line in output.getvalue().splitlines()]
+                        creation = next(r for r in records if r["stage"] == "version_create" and r["event"] == "response")
+                        self.assertTrue(creation["present"])
+                        self.assertNotIn("id", creation)
                         self.assertEqual([(r["stage"], r["event"]) for r in records], [
                             ("preflight", "start"), ("preflight", "response"),
                             ("upload", "start"), ("upload", "response"),
