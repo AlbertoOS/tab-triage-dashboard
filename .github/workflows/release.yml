@@ -23,19 +23,47 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - name: Check out trusted workflow source
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-node@v7
+      - name: Set up selected Node runtime
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ hashFiles('.node-version') == '' && '24' || '' }}
           node-version-file: ${{ hashFiles('.node-version') && '.node-version' || '' }}
           cache: npm
-      - run: npm ci
-      - run: npm test
-      - run: npm run lint
+      - name: Report installed runtimes
+        run: |
+          python3 - <<'PY'
+          import re, subprocess, sys
+          from scripts.workflow_diagnostics import write_record
+
+          def report(tool, version):
+              record = {"component": "workflow-runtime", "stage": "runtime", "event": "unavailable", "tool": tool}
+              if isinstance(version, str) and re.fullmatch(r"v?[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}", version):
+                  record.update(event="observed", version=version)
+              write_record("Workflow diagnostic: ", record)
+
+          for tool in ("node", "npm"):
+              version = None
+              try:
+                  result = subprocess.run([tool, "--version"], capture_output=True, text=True, timeout=10)
+                  if result.returncode == 0 and len(result.stdout) <= 32:
+                      version = result.stdout.strip()
+              except (OSError, subprocess.TimeoutExpired):
+                  pass
+              report(tool, version)
+          report("python", ".".join(str(n) for n in sys.version_info[:3]))
+          PY
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Run offline regression tests
+        run: npm test
+      - name: Validate extension packages
+        run: npm run lint
       - name: Validate the original PR version and squash classification
         if: github.event_name == 'pull_request'
         env:
@@ -57,15 +85,40 @@ jobs:
     outputs:
       tags: ${{ steps.result.outputs.tags }}
     steps:
-      - uses: actions/checkout@v7
+      - name: Check out trusted workflow source
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-node@v7
+      - name: Set up selected Node runtime
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ hashFiles('.node-version') == '' && '24' || '' }}
           node-version-file: ${{ hashFiles('.node-version') && '.node-version' || '' }}
+      - name: Report installed runtimes
+        run: |
+          python3 - <<'PY'
+          import re, subprocess, sys
+          from scripts.workflow_diagnostics import write_record
+
+          def report(tool, version):
+              record = {"component": "workflow-runtime", "stage": "runtime", "event": "unavailable", "tool": tool}
+              if isinstance(version, str) and re.fullmatch(r"v?[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}", version):
+                  record.update(event="observed", version=version)
+              write_record("Workflow diagnostic: ", record)
+
+          for tool in ("node", "npm"):
+              version = None
+              try:
+                  result = subprocess.run([tool, "--version"], capture_output=True, text=True, timeout=10)
+                  if result.returncode == 0 and len(result.stdout) <= 32:
+                      version = result.stdout.strip()
+              except (OSError, subprocess.TimeoutExpired):
+                  pass
+              report(tool, version)
+          report("python", ".".join(str(n) for n in sys.version_info[:3]))
+          PY
       - name: Reconcile immutable tags, draft assets and published releases
         env:
           GH_TOKEN: ${{ github.token }}
@@ -103,15 +156,64 @@ jobs:
           RELEASE_TAG: ${{ matrix.tag }}
         run: |
           python3 - <<'PY'
-          import json, os, re, subprocess
+          import json, os, re, subprocess, sys
+
+          def emit(stage, event, **fields):
+              # Static call-site phases; project dynamic fields instead of logging raw data.
+              record = {"component": 'release-dispatch', "stage": stage, "event": event}
+              browser = fields.get("browser")
+              if browser in ("firefox", "chrome"):
+                  record["browser"] = browser
+              tag = fields.get("tag")
+              if isinstance(tag, str) and len(tag) <= 64 and re.fullmatch(r"v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", tag):
+                  record["tag"] = tag
+              code = fields.get("exit_code")
+              if type(code) is int and -(2**31) <= code < 2**31:
+                  record["exit_code"] = code
+              version = fields.get("python_version")
+              if isinstance(version, str) and re.fullmatch(r"[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}", version):
+                  record["python_version"] = version
+              line = "Workflow diagnostic: " + json.dumps(record, sort_keys=True) + "\n"
+              try:
+                  try:
+                      fileno = getattr(sys.stderr, "fileno", None)
+                      fd = fileno() if fileno is not None else None
+                  except (OSError, ValueError):
+                      fd = None
+                  if type(fd) is int and fd >= 0:
+                      # Bypass buffering: a failed flush can otherwise cause exit 120.
+                      remaining = line.encode("ascii")
+                      while remaining:
+                          written = os.write(fd, remaining)
+                          if written <= 0:
+                              raise OSError("Diagnostic write made no progress")
+                          remaining = remaining[written:]
+                  else:
+                      sys.stderr.write(line)
+              except (OSError, ValueError):
+                  pass
+
+          emit("runtime", "observed", python_version=".".join(str(n) for n in sys.version_info[:3]))
           tag = os.environ["RELEASE_TAG"]
           if not re.fullmatch(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", tag):
+              emit("tag-validation", "rejected")
               raise SystemExit("Invalid release tag.")
+          emit("tag-validation", "accepted", tag=tag)
+          emit("dispatch", "started", tag=tag)
           try:
               result = subprocess.run(["gh", "api", "--method", "POST", f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/workflows/publish-stores.yml/dispatches", "--input", "-"], input=json.dumps({"ref": "main", "inputs": {"release-tag": tag}}), text=True, capture_output=True, timeout=60)
+              if type(result.returncode) is int and result.returncode < 0:
+                  emit("dispatch", "uncertain", tag=tag, exit_code=result.returncode)
+                  raise SystemExit("Coordinator dispatch outcome is uncertain; inspect existing runs before retrying.")
               if result.returncode:
+                  emit("dispatch", "failed", tag=tag, exit_code=result.returncode)
                   raise SystemExit("Coordinator dispatch failed; inspect existing runs before retrying.")
-          except (subprocess.TimeoutExpired, OSError):
+          except subprocess.TimeoutExpired:
+              emit("dispatch", "uncertain", tag=tag)
               raise SystemExit("Coordinator dispatch outcome is uncertain; inspect existing runs before retrying.")
+          except OSError:
+              emit("dispatch", "process-start-failed", tag=tag)
+              raise SystemExit("Coordinator dispatch outcome is uncertain; inspect existing runs before retrying.")
+          emit("dispatch", "succeeded", tag=tag, exit_code=result.returncode)
           print("Store coordinator dispatched; this does not establish store submission or public availability.")
           PY

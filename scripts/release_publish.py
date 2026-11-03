@@ -1,6 +1,7 @@
 """Resumable GitHub releases from reviewed main commits; no store credentials."""
 
 import argparse
+from contextlib import contextmanager
 import datetime
 import hashlib
 import json
@@ -8,10 +9,12 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 from typing import Any
 
 import store_publish as store
+from workflow_diagnostics import emit
 
 ROOT = Path(__file__).resolve().parents[1]
 ZIPS = store.ZIP_NAMES
@@ -23,6 +26,22 @@ EMAIL = "41898282+github-actions[bot]@users.noreply.github.com"
 
 class Failure(Exception):
     """Static, safe diagnostics only."""
+
+
+@contextmanager
+def phase(stage, intent=None, uncertain=False, **fields):
+    """Observe a real boundary without changing its errors or recovery policy."""
+    if intent is not None:
+        fields.update(version=intent.get("version"), tag=intent.get("tag"),
+                      commit=intent.get("commit"))
+    emit("release", stage, "start", **fields)
+    try:
+        yield
+    except (Failure, store.Failure, ValueError, KeyError, TypeError, OSError,
+            subprocess.SubprocessError):
+        emit("release", stage, "uncertain" if uncertain else "failed", **fields)
+        raise
+    emit("release", stage, "complete", **fields)
 
 
 def require(condition, message):
@@ -53,34 +72,39 @@ def run(args, cwd=ROOT, data=None):
 
 
 def command(args, cwd=ROOT, data=None):
-    code, raw = run(args, cwd, data)
-    require(code == 0, "Git/GitHub operation failed; inspect state before retrying.")
-    return raw
+    with phase("runtime"):
+        code, raw = run(args, cwd, data)
+        emit("release", "runtime", "response", exit_code=code)
+        require(code == 0, "Git/GitHub operation failed; inspect state before retrying.")
+        return raw
 
 
 def api(endpoint, method="GET", payload=None, missing=False, binary=False) -> Any:
-    args = ["gh", "api", endpoint, "--method", method]
-    if binary:
-        args += ["-H", "Accept: application/octet-stream"]
-        return command(args)
-    args += ["--include"]
-    if payload is not None:
-        args += ["--input", "-"]
-    code, raw = run(
-        args, data=json.dumps(payload).encode() if payload is not None else None
-    )
-    header, separator, body = raw.replace(b"\r\n", b"\n").partition(b"\n\n")
-    status = re.match(rb"HTTP/\S+ ([0-9]{3})", header)
-    if not separator or status is None:
-        raise Failure("GitHub response did not contain an HTTP status.")
-    status = int(status[1])
-    if missing and status == 404:
-        return None
-    require(
-        code == 0 and 200 <= status < 300,
-        "GitHub request failed; no absence or success is assumed.",
-    )
-    return json.loads(body) if body.strip() else None
+    with phase("metadata"):
+        args = ["gh", "api", endpoint, "--method", method]
+        if binary:
+            args += ["-H", "Accept: application/octet-stream"]
+            return command(args)
+        args += ["--include"]
+        if payload is not None:
+            args += ["--input", "-"]
+        code, raw = run(
+            args, data=json.dumps(payload).encode() if payload is not None else None
+        )
+        header, separator, body = raw.replace(b"\r\n", b"\n").partition(b"\n\n")
+        status = re.match(rb"HTTP/\S+ ([0-9]{3})", header)
+        if not separator or status is None:
+            emit("release", "metadata", "response", exit_code=code)
+            raise Failure("GitHub response did not contain an HTTP status.")
+        status = int(status[1])
+        emit("release", "metadata", "response", http_status=status, exit_code=code)
+        if missing and status == 404:
+            return None
+        require(
+            code == 0 and 200 <= status < 300,
+            "GitHub request failed; no absence or success is assumed.",
+        )
+        return json.loads(body) if body.strip() else None
 
 
 class Publisher:
@@ -243,6 +267,9 @@ class Publisher:
         )
         for name in ZIPS:
             self.verify_zip(intent, name, assets[name])
+        for name in ZIPS:
+            emit("release", "provenance", "complete", digest=provenance["sha256"][name],
+                 commit=intent["commit"], verified=True)
 
     def build(self, intent):
         with tempfile.TemporaryDirectory(prefix="release-build-") as temp:
@@ -265,10 +292,12 @@ class Publisher:
         )
         assets = dict(existing)
         if any(name not in assets for name in ZIPS):
-            built = self.build(intent)
+            with phase("build", intent):
+                built = self.build(intent)
             for name in ZIPS:
                 assets.setdefault(name, built[name])
-        assets.setdefault("provenance.json", self.provenance(intent, oid, assets))
+        with phase("provenance", intent):
+            assets.setdefault("provenance.json", self.provenance(intent, oid, assets))
         self.verify_assets(intent, oid, assets)
         return assets
 
@@ -336,65 +365,77 @@ class Publisher:
             page += 1
 
     def publish(self, intent):
-        self.assert_main(intent)
-        oid = self.ensure_tag(intent)
-        release = self.find_release(intent["tag"])
-        if release is not None:
-            self.validate_release(release, intent)
-            if release["draft"] is False:
+        with phase("source", intent):
+            self.assert_main(intent)
+        with phase("tag", intent, uncertain=True):
+            oid = self.ensure_tag(intent)
+        with phase("draft", intent):
+            release = self.find_release(intent["tag"])
+            if release is not None:
+                self.validate_release(release, intent)
+        if release is not None and release["draft"] is False:
+            with phase("asset_verify", intent):
                 self.verify_assets(intent, oid, self.read_assets(release))
                 self.assert_tag(intent, oid)
-                return False
-        existing = self.read_assets(release) if release is not None else {}
-        assets = self.complete_assets(intent, oid, existing)
+            emit("release", "publish", "skipped", outcome="existing", tag=intent["tag"])
+            return False
+        with phase("assets", intent):
+            existing = self.read_assets(release) if release is not None else {}
+            assets = self.complete_assets(intent, oid, existing)
         if release is None:
             from release_plan import release_notes
 
-            self.assert_main(intent)
-            self.assert_tag(intent, oid)
-            release = self.request(
-                "releases",
-                method="POST",
-                payload={
-                    "tag_name": intent["tag"],
-                    "target_commitish": intent["commit"],
-                    "name": intent["tag"],
-                    "body": release_notes(self.root, intent, self.repository),
-                    "draft": True,
-                    "prerelease": False,
-                    "generate_release_notes": False,
-                },
-            )
-            self.validate_release(release, intent)
-            require(
-                release["draft"],
-                "Release creation must remain draft until assets are verified.",
-            )
-        for name in ASSETS:
-            if name not in existing:
+            with phase("draft", intent, uncertain=True):
                 self.assert_main(intent)
                 self.assert_tag(intent, oid)
-                self.upload(intent["tag"], name, assets[name])
-        self.verify_assets(intent, oid, self.read_assets(release))
-        self.assert_main(intent)
-        self.assert_tag(intent, oid)
-        self.request(
-            f"releases/{release['id']}",
-            method="PATCH",
-            payload={"draft": False, "prerelease": False, "make_latest": "true"},
-        )
-        verified = self.request(f"releases/tags/{intent['tag']}")
-        self.validate_release(verified, intent)
-        require(
-            verified["draft"] is False,
-            "Publication has not been confirmed by readback.",
-        )
-        self.verify_assets(intent, oid, self.read_assets(verified))
-        self.assert_tag(intent, oid)
+                release = self.request(
+                    "releases",
+                    method="POST",
+                    payload={
+                        "tag_name": intent["tag"],
+                        "target_commitish": intent["commit"],
+                        "name": intent["tag"],
+                        "body": release_notes(self.root, intent, self.repository),
+                        "draft": True,
+                        "prerelease": False,
+                        "generate_release_notes": False,
+                    },
+                )
+                self.validate_release(release, intent)
+                require(
+                    release["draft"],
+                    "Release creation must remain draft until assets are verified.",
+                )
+        for name in ASSETS:
+            if name not in existing:
+                with phase("asset_upload", intent, uncertain=True, byte_count=len(assets[name])):
+                    self.assert_main(intent)
+                    self.assert_tag(intent, oid)
+                    self.upload(intent["tag"], name, assets[name])
+        with phase("asset_verify", intent):
+            self.verify_assets(intent, oid, self.read_assets(release))
+        with phase("publish", intent, uncertain=True):
+            self.assert_main(intent)
+            self.assert_tag(intent, oid)
+            self.request(
+                f"releases/{release['id']}",
+                method="PATCH",
+                payload={"draft": False, "prerelease": False, "make_latest": "true"},
+            )
+        with phase("release_readback", intent):
+            verified = self.request(f"releases/tags/{intent['tag']}")
+            self.validate_release(verified, intent)
+            require(
+                verified["draft"] is False,
+                "Publication has not been confirmed by readback.",
+            )
+            self.verify_assets(intent, oid, self.read_assets(verified))
+            self.assert_tag(intent, oid)
         return True
 
 
 def main():
+    emit("release", "runtime", "start", runtime_version=".".join(map(str, sys.version_info[:3])))
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--head", required=True, help="Pinned trusted main snapshot")
     parser.add_argument(
@@ -403,28 +444,33 @@ def main():
         help="Newly published tags for the separate dispatch job",
     )
     args = parser.parse_args()
-    guard()
+    with phase("context"):
+        guard()
     from release_plan import pending_releases
 
-    head = (
-        command(["git", "rev-parse", "--verify", f"{args.head}^{{commit}}"], ROOT)
-        .decode()
-        .strip()
-    )
-    require(
-        head == os.environ.get("GITHUB_SHA"),
-        "Selected source must match the trusted workflow snapshot.",
-    )
-    intents = pending_releases(ROOT, head)
+    with phase("plan"):
+        head = (
+            command(["git", "rev-parse", "--verify", f"{args.head}^{{commit}}"], ROOT)
+            .decode()
+            .strip()
+        )
+        require(
+            head == os.environ.get("GITHUB_SHA"),
+            "Selected source must match the trusted workflow snapshot.",
+        )
+        intents = pending_releases(ROOT, head)
+        emit("release", "plan", "response", commit=head, release_count=len(intents))
     published = []
     publisher = Publisher(ROOT, os.environ["GITHUB_REPOSITORY"])
     # Persist each success before proceeding; failed later releases must not hide earlier handoffs.
     output = Path(args.output)
-    output.write_text("[]\n")
+    with phase("receipt", release_count=0):
+        output.write_text("[]\n")
     for intent in intents:
         if publisher.publish(intent):
             published.append(intent["tag"])
-            output.write_text(json.dumps(published) + "\n")
+            with phase("receipt", release_count=len(published)):
+                output.write_text(json.dumps(published) + "\n")
         print(
             f"Verified GitHub release {intent['tag']}; existing publications are not overwritten or redispatched."
         )

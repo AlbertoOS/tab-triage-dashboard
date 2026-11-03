@@ -28,22 +28,72 @@ jobs:
           RELEASE_TAG: ${{ inputs.release-tag || github.event.release.tag_name }}
         run: |
           python3 - <<'PY'
-          import json, os, re, subprocess
+          import json, os, re, subprocess, sys
+
+          def emit(stage, event, **fields):
+              # Static call-site phases; project dynamic fields instead of logging raw data.
+              record = {"component": 'store-dispatch', "stage": stage, "event": event}
+              browser = fields.get("browser")
+              if browser in ("firefox", "chrome"):
+                  record["browser"] = browser
+              tag = fields.get("tag")
+              if isinstance(tag, str) and len(tag) <= 64 and re.fullmatch(r"v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", tag):
+                  record["tag"] = tag
+              code = fields.get("exit_code")
+              if type(code) is int and -(2**31) <= code < 2**31:
+                  record["exit_code"] = code
+              version = fields.get("python_version")
+              if isinstance(version, str) and re.fullmatch(r"[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}", version):
+                  record["python_version"] = version
+              line = "Workflow diagnostic: " + json.dumps(record, sort_keys=True) + "\n"
+              try:
+                  try:
+                      fileno = getattr(sys.stderr, "fileno", None)
+                      fd = fileno() if fileno is not None else None
+                  except (OSError, ValueError):
+                      fd = None
+                  if type(fd) is int and fd >= 0:
+                      # Bypass buffering: a failed flush can otherwise cause exit 120.
+                      remaining = line.encode("ascii")
+                      while remaining:
+                          written = os.write(fd, remaining)
+                          if written <= 0:
+                              raise OSError("Diagnostic write made no progress")
+                          remaining = remaining[written:]
+                  else:
+                      sys.stderr.write(line)
+              except (OSError, ValueError):
+                  pass
+
+          emit("runtime", "observed", python_version=".".join(str(n) for n in sys.version_info[:3]))
           tag = os.environ["RELEASE_TAG"]
           if not re.fullmatch(r"v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", tag):
+              emit("tag-validation", "rejected")
               raise SystemExit("Release tag must be stable semver.")
+          emit("tag-validation", "accepted", tag=tag)
           repo = os.environ["GITHUB_REPOSITORY"]
           failures = []
           for browser in ("firefox", "chrome"):
               payload = json.dumps({"ref": "main", "inputs": {"release-tag": tag, "operation": "publish"}})
+              emit("dispatch", "started", browser=browser, tag=tag)
               try:
                   result = subprocess.run(["gh", "api", "--method", "POST", f"repos/{repo}/actions/workflows/publish-{browser}.yml/dispatches", "--input", "-"], input=payload, text=True, capture_output=True, timeout=60)
-              except (subprocess.TimeoutExpired, OSError):
+              except subprocess.TimeoutExpired:
+                  emit("dispatch", "uncertain", browser=browser, tag=tag)
+                  failures.append(browser)
+              except OSError:
+                  emit("dispatch", "process-start-failed", browser=browser, tag=tag)
                   failures.append(browser)
               else:
-                  if result.returncode:
+                  if type(result.returncode) is int and result.returncode < 0:
+                      emit("dispatch", "uncertain", browser=browser, tag=tag, exit_code=result.returncode)
                       failures.append(browser)
+                  elif result.returncode:
+                      emit("dispatch", "failed", browser=browser, tag=tag, exit_code=result.returncode)
+                      failures.append(browser)
+                  else:
+                      emit("dispatch", "succeeded", browser=browser, tag=tag, exit_code=result.returncode)
           if failures:
-              raise SystemExit("Main store workflow dispatch failed for " + ", ".join(failures) + "; inspect runs before retrying the affected workflow manually from main.")
+              raise SystemExit("Main store workflow dispatch not confirmed for " + ", ".join(failures) + "; inspect runs before retrying the affected workflow manually from main.")
           print("Main publication workflows dispatched; inspect their runs for publication results.")
           PY

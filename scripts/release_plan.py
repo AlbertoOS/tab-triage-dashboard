@@ -15,6 +15,8 @@ import subprocess
 import sys
 import unicodedata
 
+from workflow_diagnostics import emit
+
 SOURCES = (
     "package.json",
     "manifest.firefox.json",
@@ -37,7 +39,9 @@ def git(repo, *args):
             ["git", "-C", str(repo), *args], capture_output=True, check=True
         )
         return result.stdout.decode("utf-8", errors="replace").rstrip("\n")
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError) as error:
+        fields = {"exit_code": error.returncode} if isinstance(error, subprocess.CalledProcessError) else {}
+        emit("planner", "runtime", "failed", **fields)
         raise PlanError(
             "Git operation failed; verify references and complete history"
         ) from None
@@ -369,6 +373,7 @@ def replace_versions(text, version, lockfile=False):
 
 
 def main(argv=None):
+    emit("planner", "runtime", "start", runtime_version=".".join(map(str, sys.version_info[:3])))
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     prepare = commands.add_parser("prepare")
@@ -385,6 +390,7 @@ def main(argv=None):
     notes.add_argument("--repository", required=True)
     args = parser.parse_args(argv)
     repo = Path.cwd()
+    emit("planner", "plan", "start")
     try:
         if args.command == "notes":
             commit = resolve(repo, args.commit)
@@ -393,10 +399,13 @@ def main(argv=None):
             if intent is None:
                 raise PlanError("Commit is not a planned release boundary")
             print(release_notes(repo, intent, args.repository), end="")
+            emit("planner", "plan", "complete", version=intent["version"], tag=intent["tag"], commit=commit)
             return 0
         if args.command == "pending":
             head = resolve(repo, args.head)
-            print(json.dumps({"head": head, "releases": pending_releases(repo, head)}, sort_keys=True))
+            releases = pending_releases(repo, head)
+            print(json.dumps({"head": head, "releases": releases}, sort_keys=True))
+            emit("planner", "plan", "complete", commit=head, release_count=len(releases))
             return 0
         intent = expectation(
             repo, args.base, "HEAD" if args.command == "prepare" else args.head,
@@ -405,12 +414,14 @@ def main(argv=None):
         if args.command == "prepare":
             _, texts = sources(repo, legacy_lock=True)
             if args.write:
+                emit("planner", "metadata", "start", version=intent["version"], write=True)
                 replacements = {
                     name: replace_versions(text, intent["version"], lockfile=name == "package-lock.json")
                     for name, text in texts.items()
                 }
                 for name, text in replacements.items():
                     (repo / name).write_bytes(text.encode("utf-8"))
+                emit("planner", "metadata", "complete", count=len(replacements), write=True)
         else:
             if sources(repo, intent["head"])[0] != intent["version"]:
                 raise PlanError(
@@ -422,9 +433,12 @@ def main(argv=None):
                 != RANK[severity(repo, intent["base"], intent["head"])]
             ):
                 raise PlanError("PR title severity differs from the PR commit severity")
+        emit("planner", "plan", "complete", version=intent["version"], tag=intent["tag"],
+             commit=intent["head"], bump=intent["bump"] or "none")
         print(json.dumps(intent, sort_keys=True))
         return 0
     except (PlanError, OSError, UnicodeError):
+        emit("planner", "plan", "failed")
         print(
             "Release planning failed: invalid sources, configuration, versions, or history",
             file=sys.stderr,
