@@ -65,6 +65,41 @@ The credentialless `publish-stores.yml` coordinator listens only to `release.pub
 
 Both credential jobs and their verification jobs require `workflow_dispatch`, branch ref `refs/heads/main`, and ref type `branch`. The Python entrypoint independently enforces the exact workflow identity. PR, PR-target, topic-branch, and tag runs cannot reach credentials. Only the Chrome publication job has `id-token: write`. Store credentials are passed only to the upload/readback step (the preceding Chrome auth step mints its token); they are never passed to builds, selected-tag code, or tests.
 
+## Safe diagnostics
+
+Release planning, GitHub release publishing, passive package verification and store
+publication emit structured phase records to stderr with the prefix
+`Workflow diagnostic: `. Chrome also emits `Chrome diagnostic: ` records with a
+bounded projection of its revision/upload states. Failed store HTTP requests emit
+`Chrome HTTP diagnostic: ` or `Firefox HTTP diagnostic: ` with only the numeric
+HTTP status and an allowlisted method. Workflow steps show installed runtime
+versions without dumping the environment.
+
+Use each record's component, stage and event fields to locate the failing boundary.
+Passive package verification records metadata, tag ancestry, source parity, asset
+download, provenance and archive checks separately. Firefox's `Workflow diagnostic: `
+records report processed/valid flags, version matching, normalized channel/file state, and
+aggregate validation error/warning counts—not validation messages. Dispatch reports
+acknowledged, failed or uncertain attempts; an acknowledged dispatch is not store
+publication, and a timeout is not proof that the remote operation failed.
+
+Only allowlisted fields are logged: static labels, bounded ASCII versions and tags,
+public commit/digest values, bounded numbers and literal `true`/`false` booleans.
+Shared records omit rejected metadata; the store status projections substitute
+`unknown` or `invalid` where appropriate. Rejected values are never echoed.
+Tokens, authorization headers, raw provider/subprocess responses,
+signed URLs, account identities, private paths, archive contents and full commit
+messages are excluded. GitHub secret masking is an additional safeguard, not the
+disclosure boundary. Do not enable global Actions debug flags to expose excluded
+details.
+
+Diagnostic and job-summary sink failures are best-effort and cannot interrupt a
+store write/readback or replace its sanitized error. Missing phase output does not
+prove that an operation was never attempted. These records do not add API calls,
+change guards or introduce retries; after an uncertain write, inspect authoritative
+provider state before deciding what to repeat. Ordinary stdout/result schemas remain
+unchanged.
+
 ## Results and retries
 
 Each provider polls at most 30 times per validation/readback phase, with 10-second intervals and 60-second HTTP deadlines. Publication jobs have a 20-minute overall deadline. Polling stops once the exact version's accepted state is read back; it does not wait indefinitely for human review.

@@ -29,11 +29,26 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - name: Check out trusted workflow source
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Report installed runtimes
+        run: |
+          python3 - <<'PY'
+          import re, sys
+          from scripts.workflow_diagnostics import write_record
+
+          def report(tool, version):
+              record = {"component": "workflow-runtime", "stage": "runtime", "event": "unavailable", "tool": tool}
+              if isinstance(version, str) and re.fullmatch(r"v?[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}", version):
+                  record.update(event="observed", version=version)
+              write_record("Workflow diagnostic: ", record)
+
+          report("python", ".".join(str(n) for n in sys.version_info[:3]))
+          PY
       - name: Verify published release and exact tagged source (no store credentials)
         run: python3 -B scripts/store_publish.py verify chrome
         env:
@@ -50,11 +65,26 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v7
+      - name: Check out trusted workflow source
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Report installed runtimes
+        run: |
+          python3 - <<'PY'
+          import re, sys
+          from scripts.workflow_diagnostics import write_record
+
+          def report(tool, version):
+              record = {"component": "workflow-runtime", "stage": "runtime", "event": "unavailable", "tool": tool}
+              if isinstance(version, str) and re.fullmatch(r"v?[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}", version):
+                  record.update(event="observed", version=version)
+              write_record("Workflow diagnostic: ", record)
+
+          report("python", ".".join(str(n) for n in sys.version_info[:3]))
+          PY
       - name: Reverify release immediately before authentication
         run: python3 -B scripts/store_publish.py verify chrome
         env:
@@ -69,6 +99,7 @@ jobs:
           GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
       - uses: google-github-actions/auth@v3
+        name: Authenticate to Google with scoped keyless identity
         id: google-auth
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
