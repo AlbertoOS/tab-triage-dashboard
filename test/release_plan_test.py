@@ -7,6 +7,9 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 ROOT = Path(__file__).resolve().parents[1]
 PLANNER = ROOT / "scripts/release_plan.py"
@@ -88,6 +91,59 @@ class ReleasePlanTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertNotIn("Traceback", result.stderr)
         return result
+
+    def test_planning_diagnostics_preserve_machine_output_and_safe_bump_decision(self):
+        self.commit("fix: synthetic-credential-sentinel\n\nAuthorization: synthetic-credential-sentinel")
+        result = self.cli("prepare", "--base", self.base)
+        intent = json.loads(result.stdout)
+        records = [json.loads(line.removeprefix("Workflow diagnostic: "))
+                   for line in result.stderr.splitlines()
+                   if line.startswith("Workflow diagnostic: ")]
+        self.assertTrue(records, "production planner must report phase diagnostics")
+        self.assertEqual(records[0]["stage"], "runtime")
+        self.assertIn("runtime_version", records[0])
+        plan = next(item for item in records if item["stage"] == "plan" and item["event"] == "complete")
+        self.assertEqual(plan["bump"], "patch")
+        self.assertEqual(plan["version"], intent["version"])
+        self.assertNotIn("synthetic-credential-sentinel", result.stderr)
+        failed = self.cli("prepare", "--base=-synthetic-credential-sentinel", ok=False)
+        self.assertIn('"event": "failed"', failed.stderr)
+        self.assertNotIn("synthetic-credential-sentinel", failed.stderr)
+
+    def test_prepare_write_boundaries_survive_closed_diagnostic_sink(self):
+        import contextlib
+        import io
+        import release_plan as module
+        from unittest.mock import patch
+        self.commit("fix: prepare source metadata")
+        original = Path.cwd()
+        os.chdir(self.repo)
+        self.addCleanup(os.chdir, original)
+        sink = io.StringIO()
+        with contextlib.redirect_stderr(sink), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(module.main(["prepare", "--base", self.base, "--write"]), 0)
+        records = [json.loads(line.removeprefix("Workflow diagnostic: ")) for line in sink.getvalue().splitlines()]
+        self.assertIn(("metadata", "start"), [(r["stage"], r["event"]) for r in records])
+        self.assertIn(("metadata", "complete"), [(r["stage"], r["event"]) for r in records])
+        closed = io.StringIO()
+        closed.close()
+        self.versions("1.4.0")
+        with patch.object(sys, "stderr", closed), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(module.main(["prepare", "--base", self.base, "--write"]), 0)
+        for name in SOURCES:
+            self.assertEqual(json.loads((self.repo / name).read_text())["version"], "1.4.1")
+
+    def test_git_failure_emits_available_exit_status_without_child_output(self):
+        import contextlib
+        import io
+        import release_plan as module
+        sink = io.StringIO()
+        with contextlib.redirect_stderr(sink):
+            with self.assertRaises(module.PlanError) as caught:
+                module.git(self.repo, "show", "synthetic-credential-sentinel")
+        self.assertEqual(str(caught.exception), "Git operation failed; verify references and complete history")
+        self.assertIn('"exit_code": 128', sink.getvalue())
+        self.assertNotIn("synthetic-credential-sentinel", sink.getvalue())
 
     def test_prepare_preview_then_write_and_check(self):
         self.commit("feat: add clustering")

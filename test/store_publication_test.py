@@ -7,12 +7,14 @@ import os
 from pathlib import Path
 import socket
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch, Mock
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
 SPEC = importlib.util.spec_from_file_location(
     "store_publish", ROOT / "scripts/store_publish.py"
 )
@@ -261,6 +263,9 @@ class StorePublicationTest(unittest.TestCase):
         (folder / "scripts/store_publish.py").write_bytes(
             (ROOT / "scripts/store_publish.py").read_bytes()
         )
+        (folder / "scripts/workflow_diagnostics.py").write_bytes(
+            (ROOT / "scripts/workflow_diagnostics.py").read_bytes()
+        )
         env = {
             **os.environ,
             "GIT_CONFIG_NOSYSTEM": "1",
@@ -413,6 +418,35 @@ else:
         self.assertFalse((folder / "SHOULD-NOT-EXECUTE").exists())
         self.assertNotIn("fake-secret-sentinel", result.stdout + result.stderr)
 
+    def test_prerequisite_entrypoint_logs_phase_without_authentication(self):
+        folder, env, responses, git = self.fixture()
+        env.update({"WEB_EXT_API_KEY": "synthetic-private-key", "WEB_EXT_API_SECRET": "synthetic-private-secret"})
+        result = self.cli(folder, env, "prerequisites")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        records = [json.loads(line.removeprefix("Workflow diagnostic: ")) for line in result.stderr.splitlines()]
+        phases = [(r["stage"], r["event"]) for r in records]
+        self.assertIn(("prerequisites", "start"), phases)
+        self.assertIn(("prerequisites", "complete"), phases)
+        self.assertFalse((folder / "calls").exists())
+        self.assertNotIn("synthetic-private", result.stdout + result.stderr)
+
+    def test_real_verification_entrypoint_reports_safe_boundaries(self):
+        folder, env, responses, git = self.fixture()
+        result = self.cli(folder, env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        records = [json.loads(line.removeprefix("Workflow diagnostic: "))
+                   for line in result.stderr.splitlines() if line.startswith("Workflow diagnostic: ")]
+        phases = [(r["stage"], r["event"]) for r in records]
+        for phase in ("context", "metadata", "tag", "source", "assets", "provenance", "archive", "receipt", "verify_release"):
+            self.assertIn((phase, "start"), phases)
+            self.assertIn((phase, "complete"), phases)
+        verified = [r for r in records if r["stage"] == "verify_release" and r["event"] == "complete"]
+        self.assertEqual(verified[0]["version"], "1.0.0")
+        self.assertRegex(verified[0]["commit"], r"^[0-9a-f]{40}$")
+        self.assertIn("runtime_version", records[0])
+        self.assertNotIn(str(folder), "\n".join(json.dumps(r) for r in records))
+        self.assertNotIn("fake-secret-sentinel", result.stdout + result.stderr)
+
     def test_release_download_counters_do_not_masquerade_as_asset_drift(self):
         folder, env, responses, git = self.fixture()
         stub = folder / "bin/gh"
@@ -538,6 +572,254 @@ else:
         }
         status: dict[str, object] = {"name": name, "itemId": "a" * 32}
         return name, env, status
+
+    def test_chrome_blocked_preflight_logs_only_allowlisted_status(self):
+        name, env, status = self.chrome_fixture()
+        sensitive = "synthetic-private-response\n::error::injected"
+        status.update({
+            "publicKey": sensitive,
+            "warned": False,
+            "takenDown": False,
+            "lastAsyncUploadState": "SUCCEEDED",
+            "publishedItemRevisionStatus": {
+                "state": "PUBLISHED",
+                "distributionChannels": [{"crxVersion": "0.8.0"}],
+            },
+            "submittedItemRevisionStatus": {
+                "state": "PENDING_REVIEW",
+                "details": sensitive,
+                "distributionChannels": [
+                    {"crxVersion": "0.9.0"}, {"crxVersion": sensitive},
+                ],
+            },
+        })
+        output = io.StringIO()
+        with (
+            patch.dict(os.environ, env),
+            patch.object(self.mod, "http", return_value=status) as transport,
+            patch("sys.stderr", output),
+        ):
+            with self.assertRaisesRegex(self.mod.Failure, "active or unknown"):
+                self.mod.publish_chrome({"version": "1.0.0"}, {}, b"zip")
+        records = [json.loads(line.removeprefix("Chrome diagnostic: "))
+                   for line in output.getvalue().splitlines()]
+        self.assertTrue(records, "the failure must retain safe provider-state evidence")
+        self.assertEqual(records[-1], {
+            "stage": "preflight", "event": "response", "target_version": "1.0.0",
+            "published": {"state": "PUBLISHED", "versions": ["0.8.0"]},
+            "submitted": {"state": "PENDING_REVIEW", "versions": ["0.9.0"]},
+            "upload_state": "SUCCEEDED", "warned": False, "taken_down": False,
+        })
+        self.assertNotIn(sensitive, output.getvalue())
+        self.assertNotIn(env["CWS_ACCESS_TOKEN"], output.getvalue())
+        self.assertNotIn(name, output.getvalue())
+        self.assertEqual(transport.call_count, 1)
+
+    def test_chrome_logs_each_phase_without_extra_store_calls(self):
+        name, env, status = self.chrome_fixture()
+        final = {**status, "submittedItemRevisionStatus": {
+            "state": "PENDING_REVIEW",
+            "distributionChannels": [{"crxVersion": "1.0.0"}],
+        }}
+        replies = [status, {**status, "uploadState": "SUCCEEDED", "crxVersion": "1.0.0"},
+                   {"private_message": "synthetic-sensitive-publish-response"}, final]
+        calls, output = [], io.StringIO()
+
+        def transport(url, method="GET", *args, **kwargs):
+            calls.append(method)
+            return replies.pop(0)
+
+        with patch.dict(os.environ, env), patch.object(self.mod, "http", transport), patch("sys.stderr", output):
+            result = self.mod.publish_chrome({"version": "1.0.0"}, {}, b"verifiedzip")
+        records = [json.loads(line.removeprefix("Chrome diagnostic: "))
+                   for line in output.getvalue().splitlines()]
+        self.assertEqual([(r["stage"], r["event"]) for r in records], [
+            ("preflight", "start"), ("preflight", "response"),
+            ("upload", "start"), ("upload", "response"),
+            ("publish", "start"), ("publish", "response"),
+            ("readback", "start"), ("readback", "response"), ("readback", "complete"),
+        ])
+        self.assertEqual(result, "submitted-for-review")
+        self.assertEqual(calls, ["GET", "POST", "POST", "GET"])
+        self.assertNotIn("synthetic-sensitive-publish-response", output.getvalue())
+        self.assertNotIn(env["CWS_ACCESS_TOKEN"], output.getvalue())
+        self.assertNotIn(name, output.getvalue())
+
+    def test_chrome_http_failure_reports_status_without_response_or_credentials(self):
+        name, env, _ = self.chrome_fixture()
+        sensitive = "synthetic-sensitive-http-response"
+        error = self.mod.urllib.error.HTTPError(
+            self.mod.CWS + "v2/" + name + ":fetchStatus", 403, sensitive,
+            {"Location": "https://example.invalid/" + sensitive},
+            io.BytesIO(sensitive.encode()),
+        )
+        output, opener = io.StringIO(), Mock()
+        opener.open.side_effect = error
+        with (
+            patch.dict(os.environ, env),
+            patch.object(self.mod.urllib.request, "build_opener", return_value=opener),
+            patch("sys.stderr", output),
+        ):
+            with self.assertRaisesRegex(self.mod.Failure, "raw response suppressed"):
+                self.mod.publish_chrome({"version": "1.0.0"}, {}, b"zip")
+        self.assertIn('"http_status": 403', output.getvalue())
+        self.assertIn('"stage": "preflight"', output.getvalue())
+        self.assertNotIn(sensitive, output.getvalue())
+        self.assertNotIn(env["CWS_ACCESS_TOKEN"], output.getvalue())
+        self.assertNotIn(name, output.getvalue())
+        self.assertEqual(opener.open.call_count, 1)
+        self.assertTrue(error.fp.closed)
+
+    def test_chrome_diagnostic_unknown_data_cannot_inject_log_values(self):
+        sensitive = "synthetic-sensitive-field\n::error::injected"
+        output = io.StringIO()
+        malformed = {
+            "publishedItemRevisionStatus": [sensitive],
+            "submittedItemRevisionStatus": {
+                "state": sensitive,
+                "distributionChannels": [{"crxVersion": f"0.9.{i}"} for i in range(20)],
+            },
+            "lastAsyncUploadState": [sensitive],
+            "warned": {"secret": sensitive}, "takenDown": sensitive,
+            "crxVersion": sensitive,
+        }
+        with patch("sys.stderr", output):
+            for status in (None, [], malformed):
+                self.mod.chrome_diagnostic("preflight", "response", sensitive, status)
+        records = [json.loads(line.removeprefix("Chrome diagnostic: "))
+                   for line in output.getvalue().splitlines()]
+        self.assertEqual(records[0].get("schema"), "unexpected")
+        self.assertEqual(records[1].get("schema"), "unexpected")
+        self.assertEqual(records[2]["published"]["state"], "unknown")
+        self.assertEqual(records[2]["submitted"]["state"], "unknown")
+        self.assertEqual(len(records[2]["submitted"]["versions"]), 8)
+        self.assertEqual(records[2]["warned"], "unknown")
+        self.assertEqual(records[2]["uploaded_version"], "invalid")
+        self.assertTrue(all(record["target_version"] == "invalid" for record in records))
+        self.assertNotIn(sensitive, output.getvalue())
+        self.assertNotIn("::error::", output.getvalue())
+
+    def test_diagnostic_sink_failure_never_interrupts_publication(self):
+        for stage in ("upload", "publish", "readback"):
+            for error_type in (OSError, ValueError):
+                with self.subTest(stage=stage, error_type=error_type.__name__):
+                    name, env, status = self.chrome_fixture()
+                    final = {**status, "submittedItemRevisionStatus": {
+                        "state": "PENDING_REVIEW",
+                        "distributionChannels": [{"crxVersion": "1.0.0"}],
+                    }}
+                    replies = [status, {**status, "uploadState": "SUCCEEDED", "crxVersion": "1.0.0"}, {}, final]
+                    calls, failed_writes = [], []
+
+                    def transport(url, method="GET", *args, **kwargs):
+                        calls.append(method)
+                        return replies.pop(0)
+
+                    def write(value):
+                        if f'"stage": "{stage}"' in value and '"event": "response"' in value:
+                            failed_writes.append(True)
+                            raise error_type("synthetic unavailable log sink")
+                        return len(value)
+
+                    sink = Mock()
+                    sink.write.side_effect = write
+                    with patch.dict(os.environ, env), patch.object(self.mod, "http", transport), patch("sys.stderr", sink):
+                        try:
+                            result = self.mod.publish_chrome({"version": "1.0.0"}, {}, b"zip")
+                        except (OSError, ValueError):
+                            self.fail("a diagnostic sink failure interrupted publication")
+                    self.assertTrue(failed_writes)
+                    self.assertEqual(result, "submitted-for-review")
+                    self.assertEqual(calls, ["GET", "POST", "POST", "GET"])
+
+    def test_http_diagnostic_sink_failure_preserves_sanitized_failure(self):
+        for error_type in (OSError, ValueError):
+            with self.subTest(error_type=error_type.__name__):
+                name, env, _ = self.chrome_fixture()
+                error = self.mod.urllib.error.HTTPError(
+                    self.mod.CWS + "v2/" + name + ":fetchStatus", 403,
+                    "synthetic-sensitive-reason", {}, io.BytesIO(b"synthetic-sensitive-body"),
+                )
+                opener, sink, failed_writes = Mock(), Mock(), []
+                opener.open.side_effect = error
+
+                def write(value):
+                    if value.startswith("Chrome HTTP diagnostic: "):
+                        failed_writes.append(True)
+                        raise error_type("synthetic unavailable log sink")
+                    return len(value)
+
+                sink.write.side_effect = write
+                with patch.dict(os.environ, env), patch.object(self.mod.urllib.request, "build_opener", return_value=opener), patch("sys.stderr", sink):
+                    try:
+                        with self.assertRaisesRegex(self.mod.Failure, "raw response suppressed"):
+                            self.mod.publish_chrome({"version": "1.0.0"}, {}, b"zip")
+                    except (OSError, ValueError):
+                        self.fail("a diagnostic sink failure replaced the sanitized HTTP failure")
+                self.assertTrue(failed_writes)
+                self.assertEqual(opener.open.call_count, 1)
+                self.assertTrue(error.fp.closed)
+
+    @unittest.skipUnless(Path("/dev/full").exists(), "requires the ENOSPC sink device")
+    def test_real_chrome_publication_keeps_exit_zero_with_full_stderr_device(self):
+        program = """import os, socket, sys
+sys.path.insert(0,"test")
+from unittest.mock import patch
+from store_publication_test import StorePublicationTest
+socket.socket.connect=lambda *a,**k: (_ for _ in ()).throw(AssertionError("offline"))
+case=StorePublicationTest()
+case.setUp()
+name,env,status=case.chrome_fixture()
+final={**status,"submittedItemRevisionStatus":{"state":"PENDING_REVIEW","distributionChannels":[{"crxVersion":"1.0.0"}]}}
+responses=[status,{**status,"uploadState":"SUCCEEDED","crxVersion":"1.0.0"},{},final]
+calls=[]
+def transport(url,method="GET",*args,**kwargs):
+    calls.append(method)
+    return responses.pop(0)
+with patch.dict(os.environ,env),patch.object(case.mod,"http",transport):
+    result=case.mod.publish_chrome({"version":"1.0.0"},{},b"verifiedzip")
+assert calls==["GET","POST","POST","GET"]
+assert not responses
+print(result)
+"""
+        with tempfile.TemporaryDirectory() as folder, open("/dev/full", "wb", buffering=0) as sink:
+            shadow = Path(folder) / "test"
+            shadow.mkdir()
+            (shadow / "__init__.py").write_text("# Simulate a concrete standard-library test package.\n")
+            env = {key: os.environ[key] for key in ("PATH", "TMPDIR") if key in os.environ}
+            env["PYTHONPATH"] = folder
+            result = subprocess.run([sys.executable, "-B", "-c", program], cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=sink, text=True, timeout=15)
+        self.assertEqual(result.stdout, "submitted-for-review\n")
+        self.assertEqual(result.returncode, 0)
+
+    def test_async_success_logs_poll_states_without_extra_requests(self):
+        name, env, status = self.chrome_fixture()
+        final = {**status, "submittedItemRevisionStatus": {
+            "state": "PENDING_REVIEW",
+            "distributionChannels": [{"crxVersion": "1.0.0"}],
+        }}
+        replies = [
+            status, {**status, "uploadState": "IN_PROGRESS"},
+            {**status, "lastAsyncUploadState": "IN_PROGRESS", "private_data": "synthetic-sensitive-poll"},
+            {**status, "lastAsyncUploadState": "SUCCEEDED"}, {}, final,
+        ]
+        calls, output = [], io.StringIO()
+
+        def transport(url, method="GET", *args, **kwargs):
+            calls.append(method)
+            return replies.pop(0)
+
+        with patch.dict(os.environ, env), patch.object(self.mod, "http", transport), patch.object(self.mod.time, "sleep") as sleep, patch("sys.stderr", output):
+            result = self.mod.publish_chrome({"version": "1.0.0"}, {}, b"verifiedzip")
+        records = [json.loads(line.removeprefix("Chrome diagnostic: "))
+                   for line in output.getvalue().splitlines()]
+        polls = [record for record in records if record["stage"] == "upload_poll" and record["event"] == "response"]
+        self.assertEqual([record["upload_state"] for record in polls], ["IN_PROGRESS", "SUCCEEDED"])
+        self.assertEqual(calls, ["GET", "POST", "GET", "GET", "POST", "GET"])
+        self.assertEqual(result, "submitted-for-review")
+        sleep.assert_called_once()
+        self.assertNotIn("synthetic-sensitive-poll", output.getvalue())
+        self.assertNotIn(env["CWS_ACCESS_TOKEN"], output.getvalue())
 
     def test_chrome_equal_version_refuses_unverifiable_success(self):
         name, env, status = self.chrome_fixture()
@@ -802,6 +1084,144 @@ else:
         self.assertIn(b"verifiedzip", calls[1][2])
         self.assertEqual([c[1] for c in calls].count("POST"), 2)
 
+    def test_firefox_projection_rejects_malformed_fields_and_does_not_invent_counts(self):
+        output = io.StringIO()
+        with patch("sys.stderr", output):
+            self.mod.firefox_diagnostic("validation", "response", "1.0.0", {
+                "version": "1.0.0\n::error::synthetic-private-version", "channel": "synthetic-private-channel",
+                "processed": "synthetic-private-processed", "valid": 1,
+                "file": {"status": "synthetic-private-state", "url": "https://private.invalid/token"},
+                "validation": {"errors": ["synthetic-private-error"] * 65536},
+                "uuid": "synthetic-private-identifier",
+            })
+        record = json.loads(output.getvalue().removeprefix("Workflow diagnostic: "))
+        self.assertEqual(record["error_count"], "unknown")
+        self.assertEqual(record["observed_version"], "invalid")
+        self.assertEqual(record["processed"], "unknown")
+        self.assertEqual(record["valid"], "unknown")
+        self.assertEqual(record["channel"], "unknown")
+        self.assertEqual(record["file_state"], "unknown")
+        self.assertFalse(record["version_matches"])
+        for sentinel in ("synthetic-private", "::error::", "private.invalid"):
+            self.assertNotIn(sentinel, output.getvalue())
+
+    def test_firefox_http_failure_logs_status_without_raw_error(self):
+        for failed_sink in (False, True):
+            with self.subTest(failed_sink=failed_sink):
+                output, attempts = io.StringIO(), []
+                error = self.mod.urllib.error.HTTPError(
+                    self.mod.AMO + "addons/upload/", 403, "synthetic-private-reason",
+                    {"Location": "https://private.invalid/synthetic-private-location"},
+                    io.BytesIO(b"synthetic-private-body"),
+                )
+                opener, sink = Mock(), Mock()
+                opener.open.side_effect = error
+
+                def write(value):
+                    if value.startswith("Firefox HTTP diagnostic: "):
+                        attempts.append(True)
+                        if failed_sink:
+                            raise OSError("synthetic unavailable sink")
+                    return output.write(value)
+
+                sink.write.side_effect = write
+                with patch.object(self.mod.urllib.request, "build_opener", return_value=opener), patch("sys.stderr", sink):
+                    with self.assertRaisesRegex(self.mod.Failure, "raw response suppressed"):
+                        self.mod.http(self.mod.AMO + "addons/upload/", method="POST", headers={"Authorization": "synthetic-private-token"})
+                self.assertTrue(attempts)
+                if not failed_sink:
+                    self.assertIn('"http_status": 403', output.getvalue())
+                    self.assertIn('"method": "POST"', output.getvalue())
+                self.assertNotIn("synthetic-private", output.getvalue())
+                self.assertEqual(opener.open.call_count, 1)
+
+    def test_firefox_phase_logs_preserve_requests_and_survive_sink_failures(self):
+        for stage in (None, "upload", "version_create", "archive"):
+            for error_type in (OSError, ValueError):
+                with self.subTest(stage=stage, error_type=error_type.__name__):
+                    expected, raw, version = self.amo_fixture()
+                    replies = [None, {"uuid": "1" * 32}, {"processed": False},
+                               {"processed": True, "valid": True, "version": "1.0.0", "channel": "listed"},
+                               {"id": 4}, version, raw]
+                    calls, failures, output = [], [], io.StringIO()
+
+                    def transport(url, method="GET", *args, **kwargs):
+                        calls.append(method)
+                        return replies.pop(0)
+
+                    def write(value):
+                        if stage and f'"stage": "{stage}"' in value and ('"event": "response"' in value or '"event": "complete"' in value):
+                            failures.append(True)
+                            raise error_type("synthetic unavailable sink")
+                        return output.write(value)
+
+                    sink = Mock()
+                    sink.write.side_effect = write
+                    with patch.dict(os.environ, {"WEB_EXT_API_KEY": "fake-key", "WEB_EXT_API_SECRET": "fake-secret"}), patch.object(self.mod, "http", transport), patch.object(self.mod.time, "sleep"), patch("sys.stderr", sink):
+                        result = self.mod.publish_firefox({"version": "1.0.0"}, expected, b"verifiedzip")
+                    self.assertEqual(result, "submitted-for-review")
+                    self.assertEqual(calls, ["GET", "POST", "GET", "GET", "POST", "GET", "GET"])
+                    if stage:
+                        self.assertTrue(failures, "the selected post-write diagnostic must actually be attempted")
+                    else:
+                        records = [json.loads(line.removeprefix("Workflow diagnostic: ")) for line in output.getvalue().splitlines()]
+                        creation = next(r for r in records if r["stage"] == "version_create" and r["event"] == "response")
+                        self.assertTrue(creation["present"])
+                        self.assertNotIn("id", creation)
+                        self.assertEqual([(r["stage"], r["event"]) for r in records], [
+                            ("preflight", "start"), ("preflight", "response"),
+                            ("upload", "start"), ("upload", "response"),
+                            ("validation", "start"), ("validation", "response"),
+                            ("validation", "start"), ("validation", "response"),
+                            ("version_create", "start"), ("version_create", "response"),
+                            ("readback", "start"), ("readback", "response"),
+                            ("archive", "start"), ("archive", "complete"), ("readback", "complete"),
+                        ])
+
+    def test_firefox_failed_validation_logs_only_safe_status(self):
+        output, calls = io.StringIO(), []
+        replies = [None, {"uuid": "1" * 32}, {
+            "processed": True, "valid": False, "version": "1.0.0", "channel": "listed",
+            "validation": {"errors": 2, "warnings": 3, "messages": [{"message": "synthetic-private-validation\n::error::injected"}]},
+            "secret": "synthetic-private-provider-response",
+        }]
+
+        def transport(url, method="GET", *args, **kwargs):
+            calls.append(method)
+            return replies.pop(0)
+
+        with patch.dict(os.environ, {"WEB_EXT_API_KEY": "fake-key", "WEB_EXT_API_SECRET": "fake-secret"}), patch.object(self.mod, "http", transport), patch("sys.stderr", output):
+            with self.assertRaisesRegex(self.mod.Failure, "AMO validation failed"):
+                self.mod.publish_firefox({"version": "1.0.0"}, {}, b"zip")
+        records = [json.loads(line.removeprefix("Workflow diagnostic: ")) for line in output.getvalue().splitlines()]
+        validation = [r for r in records if r["stage"] == "validation" and r["event"] == "response"]
+        self.assertEqual(len(validation), 1)
+        self.assertEqual(validation[0]["processed"], True)
+        self.assertEqual(validation[0]["valid"], False)
+        self.assertEqual(validation[0]["version_matches"], True)
+        self.assertEqual(validation[0]["error_count"], 2)
+        self.assertEqual(validation[0]["warning_count"], 3)
+        self.assertEqual(calls, ["GET", "POST", "GET"])
+        for sentinel in ("fake-secret", "fake-key", "synthetic-private", "::error::", "1" * 32):
+            self.assertNotIn(sentinel, output.getvalue())
+
+    def test_firefox_validation_counts_accept_integer_wire_format_without_coercion(self):
+        for errors, warnings, expected in (
+            (2, 3, {"error_count": 2, "warning_count": 3}),
+            (0, 65535, {"error_count": 0, "warning_count": 65535}),
+            (-1, 65536, {"error_count": "unknown", "warning_count": "unknown"}),
+            (True, False, {}),
+            (2.0, "synthetic-private-count", {}),
+            (["synthetic-private-error"], ["synthetic-private-warning"], {"error_count": 1, "warning_count": 1}),
+        ):
+            with self.subTest(errors_type=type(errors).__name__, warnings_type=type(warnings).__name__):
+                output = io.StringIO()
+                with patch("sys.stderr", output):
+                    self.mod.firefox_diagnostic("validation", "response", "1.0.0", {"validation": {"errors": errors, "warnings": warnings, "messages": ["synthetic-private-message"]}})
+                record = json.loads(output.getvalue().removeprefix("Workflow diagnostic: "))
+                self.assertEqual({key: record[key] for key in ("error_count", "warning_count") if key in record}, expected)
+                self.assertNotIn("synthetic-private", output.getvalue())
+
     def test_amo_validation_failure_never_creates_version(self):
         replies = [
             None,
@@ -845,6 +1265,8 @@ else:
     ):
         folder, env, responses, git = self.fixture()
         self.assertEqual(self.cli(folder, env).returncode, 0)
+        # A job-summary sink failure must not turn a verified submission into failure.
+        env["GITHUB_STEP_SUMMARY"] = str(folder)
         env.update(
             {
                 "WEB_EXT_API_KEY": "synthetic-key-not-real",
@@ -892,6 +1314,7 @@ class Opener:
         if status==404: raise urllib.error.HTTPError(url,404,"synthetic",{},io.BytesIO())
         return Reply(json.dumps(payload).encode())
 urllib.request.build_opener=lambda *a: Opener()
+sys.path.insert(0,"scripts")
 sys.argv=["scripts/store_publish.py","publish","firefox"]
 runpy.run_path("scripts/store_publish.py",run_name="__main__")
 assert not plan
