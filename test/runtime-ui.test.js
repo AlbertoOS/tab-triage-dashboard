@@ -33,6 +33,7 @@ function dashboard(sendMessage, storage = {}) {
       attributes: {},
       setAttribute(name, value) { this.attributes[name] = String(value); },
       getAttribute(name) { return this.attributes[name] ?? null; },
+      removeAttribute(name) { delete this.attributes[name]; },
       set disabled(value) {
         this.isDisabled = value;
         if (value && activeElement === this) activeElement = undefined;
@@ -66,6 +67,24 @@ function dashboard(sendMessage, storage = {}) {
     return elements.get(id);
   };
   get("groupBy").value = "none";
+  const html = fs.readFileSync(path.join(__dirname, "../triage.html"), "utf8");
+  const headers = [];
+  for (const [, attributes, label] of html.matchAll(/<th\b([^>]*)>([^<]*)/g)) {
+    const sort = attributes.match(/data-sort="([^"]+)"/);
+    if (!sort) continue;
+    const header = element("th");
+    header.dataset.sort = sort[1];
+    header.className = attributes.match(/class="([^"]+)"/)[1];
+    header.textContent = label;
+    header.closest = (selector) => selector === "th.sortable" ? header : null;
+    header.classList = {
+      contains: (name) => header.className.split(" ").includes(name),
+      add(...names) { header.className = [...new Set([...header.className.split(" "), ...names])].join(" "); },
+      remove(...names) { header.className = header.className.split(" ").filter((name) => !names.includes(name)).join(" "); },
+    };
+    get("thead").appendChild(header);
+    headers.push(header);
+  }
   const messages = [];
   const resizeObservers = [];
   const context = vm.createContext({
@@ -91,6 +110,7 @@ function dashboard(sendMessage, storage = {}) {
     document: { get activeElement() { return activeElement; },
       getElementById: get, createElement: element,
       querySelectorAll: (selector) => {
+        if (selector === "th.sortable") return headers;
         if (selector === 'input[name="filterDomain"]' || selector === 'input[name="filterDomain"]:checked') {
           return get("domainList").children.map((label) => label.querySelector("input"))
             .filter((input) => !selector.endsWith(":checked") || input.checked);
@@ -476,4 +496,85 @@ it("contains initial load failures and retains known tabs on rejected or malform
   await app.get("refresh").listeners.click();
   assert.equal(app.run("allTabs.length"), 1);
   assert.match(app.get("bulkError").textContent, /refresh|response/i);
+});
+
+for (const [label, expected, directions] of [
+  ["Age", [["2", "3", "1"], ["1", "3", "2"], ["1", "2", "3"]], ["desc", "asc", null]],
+  ["Title", [["2", "1", "3"], ["3", "1", "2"], ["1", "2", "3"]], ["asc", "desc", null]],
+  ["Domain", [["2", "1", "3"], ["3", "1", "2"], ["1", "2", "3"]], ["asc", "desc", null]],
+]) {
+  it(`cycles the real ${label} header through both directions and unsorted twice`, async () => {
+    const tabs = [
+      { id: 1, title: "Bravo", url: "https://bravo.example", lastAccessed: 3000 },
+      { id: 2, title: "alpha", url: "https://alpha.example", lastAccessed: 1000 },
+      { id: 3, title: "CHARLIE", url: "https://charlie.example", lastAccessed: 2000 },
+    ];
+    const app = dashboard(() => ({ ok: true, tabs }));
+    await app.settle();
+    const header = app.get("thead").children.find((item) => item.textContent === label);
+    assert.ok(header, "use the header and sort key from the actual HTML");
+    for (let cycle = 0; cycle < 2; cycle++) {
+      for (let step = 0; step < directions.length; step++) {
+        app.get("thead").listeners.click({ target: header });
+        assert.deepEqual(app.get("tab-body").children.map((row) => row.dataset.tabId), expected[step]);
+        assert.equal(header.classList.contains("sort-asc"), directions[step] === "asc");
+        assert.equal(header.classList.contains("sort-desc"), directions[step] === "desc");
+        assert.equal(header.getAttribute("data-sort-order"), null);
+      }
+    }
+    assert.equal(app.messages.length, 1, "sorting must not issue additional browser commands");
+    assert.equal(app.messages[0].type, "getTabs");
+    assert.deepEqual(tabs.map((tab) => tab.id), [1, 2, 3], "do not mutate the browser's input order");
+  });
+}
+
+it("preserves each sortable column's default direction and completes its three-state cycle", async () => {
+  const app = dashboard(() => ({ ok: true, tabs: [] }));
+  await app.settle();
+  for (const header of app.get("thead").children) {
+    const first = header.textContent === "Title" || header.textContent === "Domain" ? "asc" : "desc";
+    for (const direction of [first, first === "asc" ? "desc" : "asc", null]) {
+      app.get("thead").listeners.click({ target: header });
+      assert.equal(header.classList.contains("sort-asc"), direction === "asc", header.textContent);
+      assert.equal(header.classList.contains("sort-desc"), direction === "desc", header.textContent);
+      assert.equal(app.run("currentSort.length"), direction ? 1 : 0);
+    }
+  }
+});
+
+it("cycles secondary sorting without losing primary sorting and renumbers remaining priorities", async () => {
+  const tabs = [
+    { id: 1, title: "Bravo", url: "https://one.example", lastAccessed: 20 },
+    { id: 2, title: "Alpha", url: "https://two.example", lastAccessed: 30 },
+    { id: 3, title: "Bravo", url: "https://three.example", lastAccessed: 10 },
+    { id: 4, title: "Alpha", url: "https://four.example", lastAccessed: 5 },
+  ];
+  const app = dashboard(() => ({ ok: true, tabs }));
+  await app.settle();
+  const title = app.get("thead").children.find((header) => header.textContent === "Title");
+  const age = app.get("thead").children.find((header) => header.textContent === "Age");
+  const click = (header) => app.get("thead").listeners.click({ target: { closest: () => header } });
+  const order = () => app.get("tab-body").children.map((row) => row.dataset.tabId);
+  click(title);
+  assert.deepEqual(order(), ["2", "4", "1", "3"]);
+  click(age);
+  assert.deepEqual(order(), ["4", "2", "3", "1"]);
+  assert.equal(title.getAttribute("data-sort-order"), "1");
+  assert.equal(age.getAttribute("data-sort-order"), "2");
+  click(age);
+  assert.deepEqual(order(), ["2", "4", "1", "3"]);
+  click(title);
+  assert.deepEqual(order(), ["1", "3", "2", "4"]);
+  click(title);
+  assert.deepEqual(order(), ["2", "1", "3", "4"]);
+  assert.equal(title.classList.contains("sort-asc"), false);
+  assert.equal(title.classList.contains("sort-desc"), false);
+  assert.equal(title.getAttribute("data-sort-order"), null);
+  assert.equal(age.getAttribute("data-sort-order"), null);
+  assert.equal(age.classList.contains("sort-asc"), true);
+  app.get("thead").listeners.click({ target: { closest: () => null } });
+  assert.deepEqual(order(), ["2", "1", "3", "4"], "ignore non-sortable headers");
+  click(age);
+  assert.deepEqual(order(), ["1", "2", "3", "4"]);
+  assert.equal(app.run("currentSort.length"), 0);
 });
