@@ -30,13 +30,7 @@ function reportError(message) {
 
 async function refreshTabs() {
   document.getElementById("bulkError").textContent = "";
-  try {
-    await loadTabs();
-    return { ok: true };
-  } catch (error) {
-    reportError(`Could not refresh tabs: ${error.message}`);
-    return { ok: false, error: error.message };
-  }
+  return loadTabs();
 }
 
 async function runTabAction(message, successMessage) {
@@ -48,23 +42,36 @@ async function runTabAction(message, successMessage) {
     reportError(`Could not complete tab action: ${error.message}`);
   } finally {
     // Operations can partly succeed before the browser rejects them.
-    try {
-      await loadTabs();
-    } catch (error) {
-      reportError(`Could not refresh tabs: ${error.message}`);
-    }
+    await loadTabs();
   }
 }
 
-async function loadTabs() {
-  await loadIgnoreLists();
-  const response = await sendCommand({ type: "getTabs" });
-  if (!Array.isArray(response.tabs)) throw new Error("Invalid tab response.");
-  allTabs = response.tabs;
-  enrichTabs();
-  populateDomainFilter();
-  render();
-  updateIgnoredPanel();
+let latestLoad;
+
+function loadTabs(shouldReportError = () => true) {
+  const request = {};
+  latestLoad = request;
+  request.promise = (async () => {
+    try {
+      const ignoreLists = await loadIgnoreLists();
+      const response = await sendCommand({ type: "getTabs" });
+      if (!Array.isArray(response.tabs)) throw new Error("Invalid tab response.");
+      if (latestLoad !== request) return latestLoad.promise;
+      allTabs = response.tabs;
+      ignoredUrls = ignoreLists.ignoredUrls;
+      ignoredDomains = ignoreLists.ignoredDomains;
+      enrichTabs();
+      populateDomainFilter();
+      render();
+      updateIgnoredPanel();
+      return { ok: true };
+    } catch (error) {
+      if (latestLoad !== request) return latestLoad.promise;
+      if (shouldReportError()) reportError(`Could not refresh tabs: ${error.message}`);
+      return { ok: false, error: error.message };
+    }
+  })();
+  return request.promise;
 }
 
 function enrichTabs() {
@@ -323,11 +330,7 @@ async function closeSelectedTabs() {
   } catch (error) {
     document.getElementById("bulkError").textContent = `Could not close selected tabs: ${error.message}`;
   } finally {
-    try {
-      await loadTabs();
-    } catch (error) {
-      reportError(`Could not refresh tabs: ${error.message}`);
-    }
+    await loadTabs();
     closingSelected = false;
     render();
   }
@@ -680,6 +683,10 @@ function populateDomainFilter() {
     }
   }
 
+  // A selected domain with no current tabs must still constrain the inventory.
+  for (const domain of selectedDomains) {
+    if (!Object.hasOwn(domainCounts, domain)) domainCounts[domain] = 0;
+  }
   const sorted = Object.entries(domainCounts).sort((a, b) => b[1] - a[1]);
   const list = document.getElementById("domainList");
   list.innerHTML = "";
@@ -744,8 +751,10 @@ function createTd(className, text) {
 
 async function loadIgnoreLists() {
   const result = await api.storage.local.get(["ignoredUrls", "ignoredDomains"]);
-  ignoredUrls = new Set(result.ignoredUrls || []);
-  ignoredDomains = new Set(result.ignoredDomains || []);
+  return {
+    ignoredUrls: new Set(result.ignoredUrls || []),
+    ignoredDomains: new Set(result.ignoredDomains || []),
+  };
 }
 
 async function saveIgnoreLists() {
@@ -1091,13 +1100,7 @@ function showUndoToast(message) {
         newBtn.setAttribute("aria-disabled", "false");
       }
     } finally {
-      try {
-        await loadTabs();
-      } catch (error) {
-        if (document.getElementById("undo-toast-btn") === newBtn) {
-          reportError(`Could not refresh tabs: ${error.message}`);
-        }
-      }
+      await loadTabs(() => document.getElementById("undo-toast-btn") === newBtn);
     }
   });
 }

@@ -58,7 +58,7 @@ function dashboard(sendMessage, storage = {}, browser = {}) {
         if (this.contains(activeElement)) activeElement = undefined;
         this.children = [];
       },
-      set textContent(value) { this.text = value; this.children = []; },
+      set textContent(value) { this.text = String(value); this.children = []; },
       get textContent() { return this.text || ""; },
     };
   }

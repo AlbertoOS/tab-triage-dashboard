@@ -247,8 +247,18 @@ describe("undo toast accessibility", () => {
 });
 
 describe("persisted URL ignores", () => {
+  const uiSource = fs.readFileSync(path.join(__dirname, "runtime-ui.test.js"), "utf8");
+  const dashboard = vm.runInNewContext(uiSource.slice(0, uiSource.indexOf("for (const [selector, type]")) + ";dashboard", { require, __dirname, URL, setImmediate });
+  function persistedDashboard(saved = {}) {
+    const app = dashboard(() => ({ ok: true, tabs: [] }), {
+      get: async () => saved,
+      set: async (value) => { Object.assign(saved, value); },
+    });
+    return { ...app, saved };
+  }
   it("saves legacy keys, reloads across fragments and removes the persisted key", async () => {
-    const app = createDashboard();
+    const app = persistedDashboard();
+    await app.settle();
     for (const url of [
       "https://example.com/path/?q=1#one/",
       "https://example.com/path/?q=1#two",
@@ -257,8 +267,7 @@ describe("persisted URL ignores", () => {
       "not-a-url",
       "",
     ]) {
-      app.context.url = url;
-      await app.run("ignoreUrl(url)");
+      await app.run(`ignoreUrl(${JSON.stringify(url)})`);
     }
     assert.deepEqual(Array.from(app.saved.ignoredUrls), [
       "https://example.com/path/?q=1",
@@ -266,7 +275,9 @@ describe("persisted URL ignores", () => {
       "https://example.com/plain",
       "not-a-url",
     ]);
-    await app.run("ignoredUrls.clear(); loadIgnoreLists()");
+    app.run("ignoredUrls.clear()");
+    assert.equal(app.run('isIgnored({ url: "https://example.com/path/?q=1#three" })'), false);
+    await app.get("refresh").listeners.click();
     assert.equal(app.run('isIgnored({ url: "https://example.com/path/?q=1#three" })'), true);
     await app.run('unignoreUrl("https://example.com/path/?q=1")');
     assert.equal(app.run('isIgnored({ url: "https://example.com/path/?q=1#three" })'), false);
@@ -274,22 +285,21 @@ describe("persisted URL ignores", () => {
   });
 
   it("matches legacy keys across fragments without changing their query/path semantics", async () => {
-    const app = createDashboard({
+    const app = persistedDashboard({
       ignoredUrls: ["https://example.com/path/?q=1", "https://example.com/query?q=", "https://example.com/plain"],
       ignoredDomains: ["ignored.example"],
     });
-    await app.run("loadIgnoreLists()");
+    await app.settle();
+    await app.get("refresh").listeners.click();
     for (const url of [
       "https://example.com/path/?q=1#one",
       "https://example.com/path/?q=1#two/",
       "https://example.com/query?q=/#route",
       "https://example.com/plain///#route",
     ]) {
-      app.context.tab = { url, domain: "example.com" };
-      assert.equal(app.run("isIgnored(tab)"), true, url);
+      assert.equal(app.run(`isIgnored(${JSON.stringify({ url, domain: "example.com" })})`), true, url);
     }
-    app.context.tab = { url: "https://example.com/path?q=1#one", domain: "example.com" };
-    assert.equal(app.run("isIgnored(tab)"), false);
+    assert.equal(app.run('isIgnored({ url: "https://example.com/path?q=1#one", domain: "example.com" })'), false);
     assert.equal(app.run('isIgnored({ domain: "ignored.example" })'), true);
     assert.equal(app.saved.ignoredUrls.length, 3);
   });

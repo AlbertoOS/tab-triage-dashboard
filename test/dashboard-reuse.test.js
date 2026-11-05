@@ -70,6 +70,282 @@ function reuseHarness(initialTabs, candidates = [{ id: 100, windowId: 1, url: da
     failRefresh(error) { queryError = error; } };
 }
 
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+it("ordinary and manual loads publish only the latest requested inventory", async () => {
+  const queries = [];
+  const app = dashboard(() => {
+    const query = deferred();
+    queries.push(query);
+    return query.promise;
+  });
+  await app.settle();
+  const manual = app.get("refresh").listeners.click();
+  await app.settle();
+  queries[1].resolve({ ok: true, tabs: [tab(2)] });
+  await manual;
+  queries[0].resolve({ ok: true, tabs: [tab(1)] });
+  await app.settle();
+  assert.deepEqual(Array.from(app.run("allTabs.map((tab) => tab.id)")), [2]);
+  assert.deepEqual(Array.from(app.get("tab-body").children, (row) => row.dataset.tabId), ["2"]);
+});
+
+it("failed inventory retains the committed ignore lists and rendered bundle", async () => {
+  let fail = false;
+  const app = dashboard(() => fail ? { ok: false, error: "Query denied" } :
+    { ok: true, tabs: [tab(1)] }, { get: async () => fail ? { ignoredDomains: ["example.test"] } : {} });
+  await app.settle();
+  fail = true;
+  await app.get("refresh").listeners.click();
+  assert.deepEqual(Array.from(app.run("getFilteredTabs().map((tab) => tab.id)")), [1]);
+  assert.deepEqual(Array.from(app.run("ignoredDomains")), []);
+  assert.deepEqual(Array.from(app.get("tab-body").children, (row) => row.dataset.tabId), ["1"]);
+  assert.match(app.get("bulkError").textContent, /Query denied/);
+});
+
+for (const owner of ["manual", "row action", "selected close", "restore"]) {
+  it(`suppresses superseded ${owner} load failures after a newer successful refresh`, async () => {
+    let pending = false;
+    const queries = [];
+    const app = dashboard((message) => {
+      if (message.type !== "getTabs") return { ok: true };
+      if (!pending) return { ok: true, tabs: [tab(1)] };
+      const query = deferred();
+      queries.push(query);
+      return query.promise;
+    });
+    await app.settle();
+    app.get("selectFiltered").listeners.click();
+    app.run('showUndoToast("Earlier close completed.")');
+    pending = true;
+    const old = owner === "manual" ? app.get("refresh").listeners.click() :
+      owner === "row action" ? app.get("tab-body").children[0].querySelector(".btn-discard")
+        .listeners.click({ stopPropagation() {} }) :
+      owner === "selected close" ? app.get("closeSelected").listeners.click() :
+        app.get("undo-toast-btn").listeners.click();
+    await app.settle();
+    const winner = app.get("refresh").listeners.click();
+    await app.settle();
+    queries[1].resolve({ ok: true, tabs: [tab(2)] });
+    await winner;
+    queries[0].resolve({ ok: false, error: "Stale query denied" });
+    await old;
+    assert.equal(app.get("bulkError").textContent, "");
+    assert.deepEqual(Array.from(app.run("allTabs.map((tab) => tab.id)")), [2]);
+  });
+}
+
+for (const owner of ["targeted refresh", "row action", "selected close", "restore"]) {
+  it(`joins the newest failed load without stale ${owner} publication or duplicate diagnostics`, async () => {
+    let pending = false;
+    const queries = [];
+    const app = dashboard((message) => {
+      if (message.type !== "getTabs") return { ok: true };
+      if (!pending) return { ok: true, tabs: [tab(1)] };
+      const query = deferred();
+      queries.push(query);
+      return query.promise;
+    });
+    await app.settle();
+    app.get("selectFiltered").listeners.click();
+    app.run('showUndoToast("Earlier close completed.")');
+    const responses = [];
+    pending = true;
+    let old;
+    if (owner === "targeted refresh") {
+      assert.equal(app.messageListeners[0]({ type: "refreshDashboard", tabId: 100 }, {},
+        (response) => responses.push(response)), true);
+    } else if (owner === "row action") {
+      old = app.get("tab-body").children[0].querySelector(".btn-discard").listeners.click({ stopPropagation() {} });
+    } else if (owner === "selected close") {
+      old = app.get("closeSelected").listeners.click();
+    } else {
+      old = app.get("undo-toast-btn").listeners.click();
+    }
+    await app.settle();
+    const winner = app.get("refresh").listeners.click();
+    await app.settle();
+    queries[1].resolve({ ok: false, error: "Newest query denied" });
+    await winner;
+    queries[0].resolve({ ok: true, tabs: [tab(2)] });
+    await old;
+    await app.settle();
+    assert.equal(app.get("bulkError").textContent, "Could not refresh tabs: Newest query denied");
+    assert.deepEqual(Array.from(app.run("allTabs.map((tab) => tab.id)")), [1]);
+    if (owner === "targeted refresh") {
+      assert.equal(responses.length, 1);
+      assert.equal(responses[0].ok, false, "a superseded refresh must not claim fresh inventory");
+      assert.equal(responses[0].error, "Newest query denied");
+    }
+  });
+}
+
+it("retains a selected zero-count domain across targeted reuse and its return", async () => {
+  const selected = { ...tab(1), url: "https://selected.test/1" };
+  const unrelated = { ...tab(2), url: "https://unrelated.test/2" };
+  const harness = reuseHarness([selected, unrelated]);
+  const app = harness.page();
+  await app.settle();
+  const find = () => app.get("domainList").children.find((label) => label.querySelector("input").value === "selected.test");
+  find().querySelector("input").checked = true;
+  find().querySelector("input").listeners.change();
+  harness.setTabs([unrelated]);
+  await harness.send.click({ windowId: 1 });
+  assert.deepEqual(Array.from(app.run("getSelectedDomains()")), ["selected.test"]);
+  assert.equal(find().querySelector("input").checked, true);
+  assert.equal(find().querySelector("input").disabled, false);
+  assert.equal(find().querySelector(".domain-item-count").textContent, "0");
+  assert.equal(app.get("domainDropdownBtn").textContent, "selected.test");
+  assert.deepEqual(Array.from(app.run("getFilteredTabs().map((tab) => tab.id)")), []);
+  assert.equal(app.get("tab-body").children.length, 0);
+  harness.setTabs([selected, unrelated]);
+  await harness.send.click({ windowId: 1 });
+  assert.equal(find().querySelector(".domain-item-count").textContent, "1");
+  assert.deepEqual(Array.from(app.run("getFilteredTabs().map((tab) => tab.id)")), [1]);
+});
+
+it("stages out-of-order ignore reads with their inventory until the latest bundle commits", async () => {
+  let pending = false;
+  const reads = [];
+  const queries = [];
+  const app = dashboard(() => {
+    if (!pending) return { ok: true, tabs: [tab(1)] };
+    const query = deferred();
+    queries.push(query);
+    return query.promise;
+  }, { get: (keys) => {
+    if (keys === "faviconSize" || !pending) return Promise.resolve({ ignoredDomains: ["committed.test"] });
+    const read = deferred();
+    reads.push(read);
+    return read.promise;
+  } });
+  await app.settle();
+  pending = true;
+  const old = app.get("refresh").listeners.click();
+  const winner = app.get("refresh").listeners.click();
+  reads[1].resolve({ ignoredDomains: ["new.test"], ignoredUrls: ["https://new.test/ignored"] });
+  await app.settle();
+  assert.deepEqual(Array.from(app.run("ignoredDomains")), ["committed.test"]);
+  assert.deepEqual(Array.from(app.run("allTabs.map((tab) => tab.id)")), [1]);
+  assert.deepEqual(Array.from(app.run("getFilteredTabs().map((tab) => tab.id)")), [1]);
+  queries[0].resolve({ ok: true, tabs: [tab(2)] });
+  await winner;
+  reads[0].resolve({ ignoredDomains: ["old.test"], ignoredUrls: ["https://old.test/ignored"] });
+  await app.settle();
+  queries[1].resolve({ ok: true, tabs: [tab(3)] });
+  await old;
+  assert.deepEqual(Array.from(app.run("ignoredDomains")), ["new.test"]);
+  assert.deepEqual(Array.from(app.run("ignoredUrls")), ["https://new.test/ignored"]);
+  assert.deepEqual(Array.from(app.run("allTabs.map((tab) => tab.id)")), [2]);
+  assert.deepEqual(Array.from(app.get("tab-body").children, (row) => row.dataset.tabId), ["2"]);
+});
+
+it("superseded targeted refresh waits for the winning inventory before acknowledging success", async () => {
+  let pending = false;
+  const queries = [];
+  const app = dashboard(() => {
+    if (!pending) return { ok: true, tabs: [tab(1)] };
+    const query = deferred();
+    queries.push(query);
+    return query.promise;
+  });
+  await app.settle();
+  pending = true;
+  const responses = [];
+  assert.equal(app.messageListeners[0]({ type: "refreshDashboard", tabId: 100 }, {},
+    (response) => responses.push(response)), true);
+  await app.settle();
+  const winner = app.get("refresh").listeners.click();
+  await app.settle();
+  queries[0].resolve({ ok: true, tabs: [tab(2)] });
+  await app.settle();
+  assert.equal(responses.length, 0, "older success is not proof of freshness");
+  assert.deepEqual(Array.from(app.run("allTabs.map((tab) => tab.id)")), [1]);
+  queries[1].resolve({ ok: true, tabs: [tab(3)] });
+  await winner;
+  await app.settle();
+  assert.equal(responses.length, 1);
+  assert.equal(responses[0].ok, true);
+  assert.deepEqual(Array.from(app.get("tab-body").children, (row) => row.dataset.tabId), ["3"]);
+});
+
+for (const clear of ["uncheck", "None"]) {
+  it(`allows explicit ${clear} of a selected zero-count domain without resurrecting it`, async () => {
+    const selected = { ...tab(1), url: "https://selected.test/1" };
+    const harness = reuseHarness([selected, tab(2)]);
+    const app = harness.page();
+    await app.settle();
+    const checkbox = () => app.get("domainList").children.find((label) =>
+      label.querySelector("input").value === "selected.test")?.querySelector("input");
+    checkbox().checked = true;
+    checkbox().listeners.change();
+    harness.setTabs([tab(2)]);
+    await harness.send.click({ windowId: 1 });
+    assert.deepEqual(Array.from(app.run("getFilteredTabs()")), []);
+    if (clear === "None") app.get("domainSelectNone").listeners.click();
+    else {
+      checkbox().checked = false;
+      checkbox().listeners.change();
+    }
+    assert.deepEqual(Array.from(app.run("getSelectedDomains()")), []);
+    assert.deepEqual(Array.from(app.run("getFilteredTabs().map((tab) => tab.id)")), [100, 2]);
+    await harness.send.click({ windowId: 1 });
+    assert.equal(checkbox(), undefined, "unchecked absent domains are not retained");
+    harness.setTabs([selected, tab(2)]);
+    await harness.send.click({ windowId: 1 });
+    assert.equal(checkbox().checked, false);
+    assert.deepEqual(Array.from(app.run("getFilteredTabs().map((tab) => tab.id)")), [100, 1, 2]);
+  });
+}
+
+for (const owner of ["row action", "selected close", "restore"]) {
+  it(`retains genuine ${owner} errors while its stale load joins a winning success`, async () => {
+    let pending = false;
+    const action = deferred();
+    const winningAction = deferred();
+    const queries = [];
+    const app = dashboard((message) => {
+      if (message.type === "goToTab") return winningAction.promise;
+      if (message.type !== "getTabs") return action.promise;
+      if (!pending) return { ok: true, tabs: [tab(1)] };
+      const query = deferred();
+      queries.push(query);
+      return query.promise;
+    });
+    await app.settle();
+    app.get("selectFiltered").listeners.click();
+    app.run('showUndoToast("Earlier close completed.")');
+    const recovery = app.get("undo-toast-btn");
+    const operation = owner === "row action" ? app.get("tab-body").children[0].querySelector(".btn-discard")
+      .listeners.click({ stopPropagation() {} }) : owner === "selected close" ?
+      app.get("closeSelected").listeners.click() : recovery.listeners.click();
+    pending = true;
+    // Start the next refresh before the operation's real error is delivered.
+    const manual = app.get("refresh").listeners.click();
+    const winning = app.get("tab-body").children[0].querySelector(".btn-goto")
+      .listeners.click({ stopPropagation() {} });
+    await app.settle();
+    action.resolve({ ok: false, error: "Action denied" });
+    await app.settle();
+    winningAction.resolve({ ok: true });
+    await app.settle();
+    queries[2].resolve({ ok: true, tabs: [tab(2)] });
+    await winning;
+    queries[1].resolve({ ok: false, error: "Stale action query denied" });
+    queries[0].resolve({ ok: true, tabs: [tab(3)] });
+    await Promise.all([operation, manual]);
+    assert.match(app.get("bulkError").textContent, /Action denied/);
+    assert.doesNotMatch(app.get("bulkError").textContent, /Stale action query/);
+    assert.deepEqual(Array.from(app.run("allTabs.map((tab) => tab.id)")), [2]);
+    assert.equal(app.get("undo-toast-btn"), recovery);
+    assert.equal(app.get("undo-toast").hidden, false);
+  });
+}
+
 it("refreshes inventory on every already-active dashboard reuse", async () => {
   const harness = reuseHarness([tab(1, "Old title"), tab(2)]);
   const app = harness.page();
