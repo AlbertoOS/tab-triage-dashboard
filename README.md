@@ -40,7 +40,7 @@ For temporary Firefox testing, run `npm run zip:firefox`, extract the archive, a
 
 Click the 🧐 icon in the toolbar to open the triage dashboard. If one is already open, the extension activates it and focuses its window instead of creating another, preferring a dashboard in the clicked window.
 
-Firefox keeps regular and private dashboard selection separate. Chrome uses a shared regular dashboard from private windows in its default spanning mode, when the extension is allowed to run in incognito. This does not change browser-granted tab access or separate extension settings and tab inventories.
+Firefox keeps regular and private dashboard selection separate. Chrome uses a shared regular dashboard from private windows in its default spanning mode, when the extension is allowed to run in incognito. This does not change which tabs the browser lets the extension access, and it does not create separate settings or tab inventories for private windows.
 
 Filter and sort the tab list, then use **Select all filtered tabs** (or the checkbox in the table header) and **Close selected** to close the result in one batch. You can also select individual rows and clear the selection. Tabs in collapsed clusters are included; dashboard tabs are excluded. Changing filters removes hidden tabs from the selection.
 
@@ -54,7 +54,7 @@ The close notification offers **Restore most recently closed tab/window**. This 
 
 - Node.js 26 LTS (26.13.0 or newer within 26.x; see `.node-version`)
 - npm
-- Python 3.10+, Git, Bash, `zip` and `unzip` for the test and packaging commands
+- Python 3.10+, Git, Bash, `zip`, `unzip` and `tar` for the test and packaging commands
 
 ### Setup
 
@@ -72,7 +72,7 @@ npm ci
 | `npm run zip:firefox`, `npm run zip:chrome` | Build one browser archive |
 | `npm run release:prepare -- --base origin/main` | Preview version preparation for the original PR; add `--write` to update source metadata |
 | `npm run release` | Legacy interactive release: commits, tags, pushes and publishes |
-| `npm run release:publish -- "$TAG"` | Legacy recovery: pushes a selected tag and can replace GitHub Release assets |
+| `npm run release:publish -- "$TAG"` | Legacy tag publisher: pushes a selected tag and can replace GitHub Release assets; not for automatic-release retries |
 | `npm run test:stores` | Run credential-free store publication checks (Python 3.10+ and Git) |
 
 ### Packaging and release retries
