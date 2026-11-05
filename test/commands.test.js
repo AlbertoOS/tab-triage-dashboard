@@ -58,7 +58,7 @@ it("rejects malformed envelopes, batch IDs, window IDs and legacy bulk restore",
 
 it("responds after focusing a tab and reports each browser operation failure", async () => {
   const events = [];
-  const send = background({ tabs: { update: async () => { events.push("tab"); } },
+  const send = background({ tabs: { update: async () => { events.push("tab"); return { id: 1, windowId: 2 }; } },
     windows: { update: async () => { events.push("window"); } } });
   assert.equal((await send({ type: "goToTab", tabId: 1, windowId: 2 })).ok, true);
   assert.deepEqual(events, ["tab", "window"]);
@@ -66,7 +66,7 @@ it("responds after focusing a tab and reports each browser operation failure", a
     ["closeTab", "tabs", "remove"], ["discardTab", "tabs", "discard"],
     ["restoreTab", "sessions", "restore"]]) {
     const fail = async () => { throw new Error("Operation denied"); };
-    const command = background({ tabs: { update: async () => {} }, [area]: { [method]: fail } });
+    const command = background({ tabs: { update: async () => ({ id: 1, windowId: 2 }) }, [area]: { [method]: fail } });
     const response = await command({ type, tabId: 1, windowId: 2 });
     assert.equal(response.ok, false, type);
     assert.match(response.error, /Operation denied/);
@@ -123,7 +123,7 @@ for (const namespace of ["browser", "chrome"]) {
     const events = [];
     const send = background({ tabs: {
       query: async () => [{ id: 4, windowId: 2, url: "chrome-extension://fixture/triage.html" }],
-      update: async (id, properties) => { events.push(["activate", id, properties.active]); },
+      update: async (id, properties) => { events.push(["activate", id, properties.active]); return { id, windowId: 2 }; },
       create: async () => { events.push(["create"]); },
     }, windows: {
       update: async (id, properties) => { events.push(["focus", id, properties.focused]); },
@@ -143,7 +143,7 @@ for (const candidate of [
     let created = false;
     const send = background({ tabs: {
       query: async () => [{ id: 4, windowId: 2, ...candidate }],
-      update: async (id) => { activated = id; },
+      update: async (id) => { activated = id; return { id, windowId: 2 }; },
       create: async () => { created = true; },
     } });
     await send.click({ windowId: 1 });
@@ -160,7 +160,7 @@ it("prefers the clicked window's dashboard without crossing Firefox private brow
       { id: 2, windowId: 8, incognito: false, url: "chrome-extension://fixture/triage.html" },
       { id: 3, windowId: 7, incognito: false, url: "chrome-extension://fixture/triage.html" },
     ],
-    update: async (id) => { activated.push(id); },
+    update: async (id) => { activated.push(id); return { id, windowId: 7 }; },
     create: async () => { assert.fail("reuse an existing dashboard"); },
   } }, "browser");
   await send.click({ windowId: 7, incognito: false });
@@ -194,7 +194,7 @@ it("coalesces overlapping toolbar clicks and permits another click after complet
   const send = background({ tabs: {
     query: () => new Promise((resolve) => { queries.push(resolve); }),
     create: async () => { created++; return { id: 1, windowId: 7 }; },
-    update: async () => { activated++; },
+    update: async () => { activated++; return { id: 1, windowId: 7 }; },
   } });
   const first = send.click({ windowId: 7 });
   const second = send.click({ windowId: 7 });
@@ -248,7 +248,7 @@ it("reuses Chrome's regular dashboard after a spanning-mode private launch", asy
       dashboards.push({ id: created, windowId: 9, incognito: false, url: properties.url });
       return dashboards[dashboards.length - 1];
     },
-    update: async (id) => { activated.push(id); },
+    update: async (id) => { activated.push(id); return dashboards.find((tab) => tab.id === id); },
   } });
   await send.click({ windowId: 2, incognito: true });
   await send.click({ windowId: 2, incognito: true });
@@ -299,7 +299,7 @@ it("preserves private creation and reuse for an explicitly split Chrome manifest
       dashboards.push({ id: 1, windowId: properties.windowId, incognito: true, url: properties.url });
       return dashboards[dashboards.length - 1];
     },
-    update: async (id) => { activated.push(id); },
+    update: async (id) => { activated.push(id); return dashboards.find((tab) => tab.id === id); },
   } });
   await send.click({ windowId: 2, incognito: true });
   await send.click({ windowId: 2, incognito: true });
@@ -312,7 +312,7 @@ it("uses Chrome spanning behavior even when the browser API alias is available",
   const activated = [];
   const send = background({ runtime: { getManifest: () => ({}) }, tabs: {
     query: async () => [{ id: 1, windowId: 9, incognito: false, url: "chrome-extension://fixture/triage.html" }],
-    update: async (id) => { activated.push(id); },
+    update: async (id) => { activated.push(id); return { id, windowId: 9 }; },
     create: async () => { created++; },
   } }, "browser");
   await send.click({ windowId: 2, incognito: true });
@@ -333,7 +333,7 @@ it("retains a created dashboard after focus failure and reuses it on retry", asy
       dashboards.push(tab);
       return tab;
     },
-    update: async (id) => { activated.push(id); },
+    update: async (id) => { activated.push(id); return dashboards.find((tab) => tab.id === id); },
   }, windows: { update: async () => {
     if (++focuses === 1) throw new Error("Focus denied");
   } } });
@@ -358,7 +358,7 @@ for (const stage of ["query", "activate", "focus"]) {
         if (stage === "query") return fail();
         return [{ id: 1, windowId: 2, url: "chrome-extension://fixture/triage.html" }];
       },
-      update: stage === "activate" ? fail : async () => {},
+      update: stage === "activate" ? fail : async (id) => ({ id, windowId: 2 }),
       create: async () => { created++; },
     }, windows: { update: stage === "focus" ? fail : async () => {} } });
     await send.click({ windowId: 2 });

@@ -45,7 +45,12 @@ function reuseHarness(initialTabs, candidates = [{ id: 100, windowId: 1, url: da
         if (queryError && broadcasts.length) throw new Error(queryError);
         return [...candidates, ...tabs];
       },
-      update: async (id) => { events.push(["activate", id]); },
+      update: async (id) => {
+        events.push(["activate", id]);
+        const current = [...candidates, ...tabs].find((tab) => tab.id === id);
+        assert.ok(current, "activation requires an existing tab");
+        return { ...current, active: true };
+      },
       create: async () => { assert.fail("reuse must not create another dashboard"); },
     },
     windows: { update: async (id) => { events.push(["focus", id]); } },
@@ -525,7 +530,7 @@ it("contains malformed refresh acknowledgments without duplicate fallback", asyn
     runtime: { sendMessage: async (message) => { broadcasts.push(message); return { ok: "yes" }; } },
     tabs: {
       query: async () => [{ id: 100, windowId: 1, url: dashboardUrl }],
-      update: async () => {},
+      update: async () => ({ id: 100, windowId: 1, url: dashboardUrl, active: true }),
       create: async () => assert.fail("do not create duplicates on missing acknowledgment"),
     },
   });

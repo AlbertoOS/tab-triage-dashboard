@@ -18,8 +18,8 @@ api.action.onClicked.addListener((clickedTab) => {
       (tab.pendingUrl || tab.url || "").split(/[?#]/)[0] === url);
     const dashboard = dashboards.find((tab) => tab.windowId === clickedTab?.windowId) || dashboards[0];
     if (dashboard) {
-      await api.tabs.update(dashboard.id, { active: true });
-      await api.windows.update(dashboard.windowId, { focused: true });
+      const activated = await api.tabs.update(dashboard.id, { active: true });
+      await api.windows.update(activated.windowId, { focused: true });
       // Extension pages receive runtime broadcasts, except the sending context.
       // The selected dashboard alone handles this notification, even if active.
       try {
@@ -60,10 +60,11 @@ api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     switch (msg.type) {
       case "getTabs":
         return { ok: true, tabs: await api.tabs.query({}) };
-      case "goToTab":
-        await api.tabs.update(msg.tabId, { active: true });
-        await api.windows.update(msg.windowId, { focused: true });
+      case "goToTab": {
+        const activated = await api.tabs.update(msg.tabId, { active: true });
+        await api.windows.update(activated.windowId, { focused: true });
         break;
+      }
       case "closeTab":
         await api.tabs.remove(msg.tabId);
         break;
