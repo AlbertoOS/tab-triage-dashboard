@@ -38,7 +38,9 @@ For temporary Firefox testing, run `npm run zip:firefox`, extract the archive, a
 
 ## Usage
 
-Click the 🧐 icon in the toolbar to open the triage dashboard. If one is already open, the extension activates it and focuses its window instead of creating another. It prefers a dashboard in the clicked window and keeps regular and private browsing contexts separate.
+Click the 🧐 icon in the toolbar to open the triage dashboard. If one is already open, the extension activates it and focuses its window instead of creating another, preferring a dashboard in the clicked window.
+
+Firefox keeps regular and private dashboard selection separate. Chrome uses a shared regular dashboard from private windows in its default spanning mode, when the extension is allowed to run in incognito. This does not change browser-granted tab access or separate extension settings and tab inventories.
 
 Filter and sort the tab list, then use **Select all filtered tabs** (or the checkbox in the table header) and **Close selected** to close the result in one batch. You can also select individual rows and clear the selection. Tabs in collapsed clusters are included; dashboard tabs are excluded. Changing filters removes hidden tabs from the selection.
 

@@ -5,7 +5,9 @@ const api = globalThis.browser || chrome;
 const openingDashboards = new Map();
 
 api.action.onClicked.addListener((clickedTab) => {
-  const incognito = !!clickedTab?.incognito;
+  // Chrome spanning mode hosts packaged extension pages in regular windows.
+  const incognito = !!clickedTab?.incognito &&
+    (!!globalThis.browser || api.runtime.getManifest().incognito === "split");
   if (openingDashboards.has(incognito)) return openingDashboards.get(incognito);
   const opening = (async () => {
     const url = api.runtime.getURL("triage.html");
@@ -18,13 +20,15 @@ api.action.onClicked.addListener((clickedTab) => {
       await api.windows.update(dashboard.windowId, { focused: true });
     } else {
       const properties = { url, active: true };
-      if (Number.isSafeInteger(clickedTab?.windowId)) properties.windowId = clickedTab.windowId;
+      if (Number.isSafeInteger(clickedTab?.windowId) && incognito === !!clickedTab?.incognito) {
+        properties.windowId = clickedTab.windowId;
+      }
       await api.tabs.create(properties);
     }
   })().catch((error) => {
     console.error("Could not open Tab Triage:", error?.message || "Browser operation failed.");
   }).finally(() => openingDashboards.delete(incognito));
-  // Share in-flight opens, but keep regular and private windows separate.
+  // Share in-flight opens by the context that can actually host the dashboard.
   openingDashboards.set(incognito, opening);
   return opening;
 });
