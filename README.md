@@ -21,11 +21,11 @@ A Firefox and Chrome extension for managing and triaging your tabs with sorting,
 
 ## Install
 
-Install from [Firefox Add-ons (AMO)](https://addons.mozilla.org/en-US/firefox/addon/tab-triage-dashboard/).
+Install from [Firefox Add-ons (AMO)](https://addons.mozilla.org/en-US/firefox/addon/tab-triage-dashboard/) or the [Chrome Web Store](https://chromewebstore.google.com/detail/tab-triage-dashboard/nfjkdmepggknjgepkigfjngckmfonlea).
 
 ### Chrome development install
 
-There is no Chrome Web Store listing yet. To test a local build:
+To test a local build instead of the store version:
 
 1. Run `npm run zip:chrome` and extract `tab-triage-dashboard-chrome.zip` into a separate directory.
 2. In a disposable Chrome profile, open `chrome://extensions` and enable **Developer mode**.
@@ -113,6 +113,10 @@ Runs Mozilla's [addons-linter](https://github.com/mozilla/addons-linter) with wa
 The extension reads tab titles, URLs, favicons, and status to render the dashboard. Preferences and ignore lists are stored locally in extension storage. It has no application backend or analytics and does not upload your tab list. Loading site favicons can cause browser network requests; unavailable icons are replaced with a bundled image. Link exports are local files you create, and they contain your browsing URLs, so review them before sharing.
 
 See the [privacy policy](PRIVACY.md) for data use, retention, site-icon requests and deletion details.
+
+## Project history and plans
+
+See the [changelog](CHANGELOG.md) for released changes and the [roadmap](ROADMAP.md) for proposed improvements. Roadmap entries are not shipped features or release-date commitments.
 
 ## License
 
