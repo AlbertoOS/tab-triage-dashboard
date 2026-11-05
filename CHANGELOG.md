@@ -10,6 +10,7 @@ See [GitHub Releases](https://github.com/AlbertoOS/tab-triage-dashboard/releases
 
 - Reuse and focus an existing dashboard from the toolbar, preferring the clicked window. Preserve Firefox private-dashboard selection and reuse Chrome's shared regular dashboard in its existing spanning mode.
 - Recognize loaded and loading dashboards, and coalesce overlapping launches rather than creating duplicate dashboard tabs.
+- Refresh the selected dashboard's inventory on reuse, including when it is already active, without resetting its filters, sort order, recovery notice or surviving selections.
 - Report browser-operation failures without opening an extra dashboard as a fallback; later toolbar clicks can retry.
 
 ## [1.4.4](https://github.com/AlbertoOS/tab-triage-dashboard/releases/tag/v1.4.4) — 2026-11-04

@@ -38,7 +38,7 @@ For temporary Firefox testing, run `npm run zip:firefox`, extract the archive, a
 
 ## Usage
 
-Click the 🧐 icon in the toolbar to open the triage dashboard. If one is already open, the extension activates it and focuses its window instead of creating another, preferring a dashboard in the clicked window.
+Click the 🧐 icon in the toolbar to open the triage dashboard. If one is already open, the extension activates it and focuses its window instead of creating another, preferring a dashboard in the clicked window. Reuse refreshes the tab list while keeping your filters, sorting and still-valid selections.
 
 Firefox keeps regular and private dashboard selection separate. Chrome uses a shared regular dashboard from private windows in its default spanning mode, when the extension is allowed to run in incognito. This does not change which tabs the browser lets the extension access, and it does not create separate settings or tab inventories for private windows.
 
