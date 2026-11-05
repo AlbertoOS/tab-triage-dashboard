@@ -7,7 +7,7 @@ const vm = require("node:vm");
 const source = fs.readFileSync(path.join(__dirname, "runtime-ui.test.js"), "utf8");
 const dashboard = vm.runInNewContext(source.slice(0, source.indexOf("for (const [selector, type]")) + ";dashboard", { require, __dirname, URL, setImmediate });
 
-it("retains only surviving checked domains through production refresh and filters rendered results", async () => {
+it("retains checked domains at zero count through production refresh until explicitly cleared", async () => {
   const tab = (id, domain) => ({ id, title: domain, url: `https://${domain}/${id}` });
   let tabs = [tab(1, "keep.test"), tab(2, "remove.test"), tab(3, "unchecked.test")];
   const app = dashboard((message) => {
@@ -38,17 +38,20 @@ it("retains only surviving checked domains through production refresh and filter
   await app.get("refresh").listeners.click();
   assert.equal(app.messages.length, 2, "refresh must fetch new browser state");
   assert.ok(inputs().every((input) => !oldInputs.includes(input)), "refresh really rebuilt controls");
-  assert.deepEqual(inputs().map((input) => input.value).sort(), ["keep.test", "new.test", "unchecked.test"]);
-  assert.deepEqual(selected(), ["keep.test"]);
+  assert.deepEqual(inputs().map((input) => input.value).sort(), ["keep.test", "new.test", "remove.test", "unchecked.test"]);
+  assert.deepEqual(selected(), ["keep.test", "remove.test"]);
   assert.deepEqual(resultIds(), [1, 5]);
   assert.equal(app.get("tab-body").children.length, 2);
-  assert.equal(app.get("domainDropdownBtn").textContent, "keep.test");
+  assert.equal(app.get("domainDropdownBtn").textContent, "2 domains selected");
   tabs = [tab(3, "unchecked.test"), tab(4, "new.test")];
   await app.get("refresh").listeners.click();
-  assert.deepEqual(selected(), []);
-  assert.deepEqual(resultIds(), [3, 4], "no remaining selection means all domains, as initially");
+  assert.deepEqual(selected(), ["keep.test", "remove.test"]);
+  assert.deepEqual(resultIds(), [], "selected absent domains must not expose unrelated tabs");
   tabs.push(tab(6, "keep.test"));
   await app.get("refresh").listeners.click();
-  assert.deepEqual(selected(), [], "removed selections must not resurrect when a domain returns");
+  assert.deepEqual(selected(), ["keep.test", "remove.test"]);
+  assert.deepEqual(resultIds(), [6], "a returning domain is still selected");
+  app.get("domainSelectNone").listeners.click();
+  assert.deepEqual(selected(), []);
   assert.deepEqual(resultIds(), [3, 4, 6]);
 });

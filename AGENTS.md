@@ -24,7 +24,7 @@ release-publish.sh   → Legacy tag publisher and maintained build-only path
 
 ### Communication
 
-Background script and triage page communicate through `api.runtime.sendMessage`, where `api` resolves to Firefox's `browser` or Chrome's `chrome`. Message types include `getTabs`, `goToTab`, `closeTab`, `closeTabs`, `discardTab`, and session restoration commands.
+Background script and triage page communicate through `api.runtime.sendMessage`, where `api` resolves to `browser` or `chrome`. Chromium can expose both aliases; use the packaged manifest, not the selected alias, to determine the dashboard's browser context. Message types include `getTabs`, `goToTab`, `closeTab`, `closeTabs`, `discardTab`, and session restoration commands.
 
 ### State
 
@@ -106,8 +106,8 @@ After a verified merge, the main workflow creates an annotated tag at the exact 
 
 | File | Purpose |
 |---|---|
-| `background.js` | Opens triage page on toolbar click, proxies tab operations |
-| `triage.js` | All UI: data loading, enrichment, filtering, sorting, grouping, rendering, event handling |
+| `background.js` | Opens or focuses the triage page on toolbar click, proxies tab operations |
+| `triage.js` | All UI: data loading, enrichment, filtering, sorting, display clustering (`groupTabs()`), rendering, event handling |
 | `triage.css` | Full styling with Catppuccin Macchiato palette |
 | `triage.html` | Page structure: toolbar, filters, table, stats bar, panels |
 | `manifest.firefox.json`, `manifest.chrome.json` | Browser-specific extension metadata and permissions |

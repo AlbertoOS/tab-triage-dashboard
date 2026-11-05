@@ -10,6 +10,8 @@ let currentSort = []; // Array of { key, dir } for multi-column sort
 let collapsedGroups = new Set();
 let ignoredUrls = new Set();
 let ignoredDomains = new Set();
+let ignoreEditRevision = 0;
+let pendingIgnoreSaves = 0;
 let showIgnored = false;
 let fuzzySearch = false;
 let selectedTabIds = new Set();
@@ -30,11 +32,7 @@ function reportError(message) {
 
 async function refreshTabs() {
   document.getElementById("bulkError").textContent = "";
-  try {
-    await loadTabs();
-  } catch (error) {
-    reportError(`Could not refresh tabs: ${error.message}`);
-  }
+  return loadTabs();
 }
 
 async function runTabAction(message, successMessage) {
@@ -46,23 +44,42 @@ async function runTabAction(message, successMessage) {
     reportError(`Could not complete tab action: ${error.message}`);
   } finally {
     // Operations can partly succeed before the browser rejects them.
-    try {
-      await loadTabs();
-    } catch (error) {
-      reportError(`Could not refresh tabs: ${error.message}`);
-    }
+    await loadTabs();
   }
 }
 
-async function loadTabs() {
-  await loadIgnoreLists();
-  const response = await sendCommand({ type: "getTabs" });
-  if (!Array.isArray(response.tabs)) throw new Error("Invalid tab response.");
-  allTabs = response.tabs;
-  enrichTabs();
-  populateDomainFilter();
-  render();
-  updateIgnoredPanel();
+let latestLoad;
+
+function loadTabs(shouldReportError = () => true) {
+  const request = {};
+  const ignoreRevision = ignoreEditRevision;
+  const ignoreSavePending = pendingIgnoreSaves > 0;
+  latestLoad = request;
+  request.promise = (async () => {
+    try {
+      const ignoreLists = await loadIgnoreLists();
+      const response = await sendCommand({ type: "getTabs" });
+      if (!Array.isArray(response.tabs)) throw new Error("Invalid tab response.");
+      if (latestLoad !== request) return latestLoad.promise;
+      allTabs = response.tabs;
+      // A local edit owns preferences, not inventory. A save already pending at
+      // read start can also make storage stale without changing this revision.
+      if (ignoreEditRevision === ignoreRevision && !ignoreSavePending) {
+        ignoredUrls = ignoreLists.ignoredUrls;
+        ignoredDomains = ignoreLists.ignoredDomains;
+      }
+      enrichTabs();
+      populateDomainFilter();
+      render();
+      updateIgnoredPanel();
+      return { ok: true };
+    } catch (error) {
+      if (latestLoad !== request) return latestLoad.promise;
+      if (shouldReportError()) reportError(`Could not refresh tabs: ${error.message}`);
+      return { ok: false, error: error.message };
+    }
+  })();
+  return request.promise;
 }
 
 function enrichTabs() {
@@ -321,11 +338,7 @@ async function closeSelectedTabs() {
   } catch (error) {
     document.getElementById("bulkError").textContent = `Could not close selected tabs: ${error.message}`;
   } finally {
-    try {
-      await loadTabs();
-    } catch (error) {
-      reportError(`Could not refresh tabs: ${error.message}`);
-    }
+    await loadTabs();
     closingSelected = false;
     render();
   }
@@ -678,6 +691,10 @@ function populateDomainFilter() {
     }
   }
 
+  // A selected domain with no current tabs must still constrain the inventory.
+  for (const domain of selectedDomains) {
+    if (!Object.hasOwn(domainCounts, domain)) domainCounts[domain] = 0;
+  }
   const sorted = Object.entries(domainCounts).sort((a, b) => b[1] - a[1]);
   const list = document.getElementById("domainList");
   list.innerHTML = "";
@@ -742,20 +759,28 @@ function createTd(className, text) {
 
 async function loadIgnoreLists() {
   const result = await api.storage.local.get(["ignoredUrls", "ignoredDomains"]);
-  ignoredUrls = new Set(result.ignoredUrls || []);
-  ignoredDomains = new Set(result.ignoredDomains || []);
+  return {
+    ignoredUrls: new Set(result.ignoredUrls || []),
+    ignoredDomains: new Set(result.ignoredDomains || []),
+  };
 }
 
 async function saveIgnoreLists() {
-  await api.storage.local.set({
-    ignoredUrls: [...ignoredUrls],
-    ignoredDomains: [...ignoredDomains],
-  });
+  pendingIgnoreSaves++;
+  try {
+    await api.storage.local.set({
+      ignoredUrls: [...ignoredUrls],
+      ignoredDomains: [...ignoredDomains],
+    });
+  } finally {
+    pendingIgnoreSaves--;
+  }
 }
 
 async function ignoreUrl(url) {
   const norm = normalizeIgnoredUrl(url);
   if (!norm) return;
+  ignoreEditRevision++;
   ignoredUrls.add(norm);
   await saveIgnoreLists();
   render();
@@ -764,6 +789,7 @@ async function ignoreUrl(url) {
 
 async function ignoreDomain(domain) {
   if (!domain) return;
+  ignoreEditRevision++;
   ignoredDomains.add(domain);
   await saveIgnoreLists();
   render();
@@ -771,6 +797,7 @@ async function ignoreDomain(domain) {
 }
 
 async function unignoreUrl(url) {
+  ignoreEditRevision++;
   ignoredUrls.delete(url);
   await saveIgnoreLists();
   render();
@@ -778,6 +805,7 @@ async function unignoreUrl(url) {
 }
 
 async function unignoreDomain(domain) {
+  ignoreEditRevision++;
   ignoredDomains.delete(domain);
   await saveIgnoreLists();
   render();
@@ -785,6 +813,7 @@ async function unignoreDomain(domain) {
 }
 
 async function resetAllIgnored() {
+  ignoreEditRevision++;
   ignoredUrls.clear();
   ignoredDomains.clear();
   await saveIgnoreLists();
@@ -1089,16 +1118,27 @@ function showUndoToast(message) {
         newBtn.setAttribute("aria-disabled", "false");
       }
     } finally {
-      try {
-        await loadTabs();
-      } catch (error) {
-        if (document.getElementById("undo-toast-btn") === newBtn) {
-          reportError(`Could not refresh tabs: ${error.message}`);
-        }
-      }
+      await loadTabs(() => document.getElementById("undo-toast-btn") === newBtn);
     }
   });
 }
 
 // --- Init ---
-refreshTabs();
+// Resolve this page's identity before initial load so broadcasts can be ignored
+// synchronously by every non-target page without claiming a response channel.
+api.tabs.getCurrent().then((tab) => {
+  if (Number.isSafeInteger(tab?.id) && tab.id >= 0) {
+    api.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      if (message?.type !== "refreshDashboard" || message.tabId !== tab.id) return false;
+      refreshTabs().then(sendResponse).catch((error) => {
+        reportError(`Could not acknowledge dashboard refresh: ${error.message}`);
+      });
+      return true;
+    });
+  }
+  return refreshTabs();
+}).catch(async (error) => {
+  // Identity failure must not block the ordinary inventory/manual refresh path.
+  await refreshTabs();
+  reportError(`Could not initialize dashboard refresh: ${error.message}`);
+});

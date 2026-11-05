@@ -4,27 +4,31 @@ const fs = require("node:fs");
 const vm = require("node:vm");
 const path = require("node:path");
 
-function background(overrides = {}) {
+function background(overrides = {}, namespace = "chrome") {
   let listener;
   let click;
   const warnings = [];
   const api = {
     action: { onClicked: { addListener(fn) { click = fn; } } },
     runtime: {
+      sendMessage: async () => ({ ok: true }),
       getURL: () => "chrome-extension://fixture/triage.html",
+      getManifest: () => namespace === "browser" ? { browser_specific_settings: { gecko: {} } } : {},
       onMessage: { addListener(fn) { listener = fn; } },
+      ...overrides.runtime,
     },
     tabs: { query: async () => [], remove: async () => {},
+      create: async (properties) => ({ id: 1, windowId: properties.windowId ?? 1, url: properties.url }),
       get: async (id) => ({ id, active: false, discarded: false }), ...overrides.tabs },
     windows: { update: async () => {}, ...overrides.windows },
     sessions: overrides.sessions,
   };
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../background.js"), "utf8"), { chrome: api, console: { error: (...args) => warnings.push(args) } });
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../background.js"), "utf8"), { [namespace]: api, console: { error: (...args) => warnings.push(args) } });
   const send = (message) => new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("No command response")), 100);
     listener(message, {}, (response) => { clearTimeout(timer); resolve(response); });
   });
-  send.click = () => click();
+  send.click = (tab) => click(tab);
   send.warnings = warnings;
   return send;
 }
@@ -54,7 +58,7 @@ it("rejects malformed envelopes, batch IDs, window IDs and legacy bulk restore",
 
 it("responds after focusing a tab and reports each browser operation failure", async () => {
   const events = [];
-  const send = background({ tabs: { update: async () => { events.push("tab"); } },
+  const send = background({ tabs: { update: async () => { events.push("tab"); return { id: 1, windowId: 2 }; } },
     windows: { update: async () => { events.push("window"); } } });
   assert.equal((await send({ type: "goToTab", tabId: 1, windowId: 2 })).ok, true);
   assert.deepEqual(events, ["tab", "window"]);
@@ -62,7 +66,7 @@ it("responds after focusing a tab and reports each browser operation failure", a
     ["closeTab", "tabs", "remove"], ["discardTab", "tabs", "discard"],
     ["restoreTab", "sessions", "restore"]]) {
     const fail = async () => { throw new Error("Operation denied"); };
-    const command = background({ tabs: { update: async () => {} }, [area]: { [method]: fail } });
+    const command = background({ tabs: { update: async () => ({ id: 1, windowId: 2 }) }, [area]: { [method]: fail } });
     const response = await command({ type, tabId: 1, windowId: 2 });
     assert.equal(response.ok, false, type);
     assert.match(response.error, /Operation denied/);
@@ -113,3 +117,255 @@ it("returns query failures to the dashboard", async () => {
   assert.equal(response.ok, false);
   assert.match(response.error, /Query denied/);
 });
+
+for (const namespace of ["browser", "chrome"]) {
+  it(`reuses an existing dashboard and focuses its window through ${namespace}`, async () => {
+    const events = [];
+    const send = background({ tabs: {
+      query: async () => [{ id: 4, windowId: 2, url: "chrome-extension://fixture/triage.html" }],
+      update: async (id, properties) => { events.push(["activate", id, properties.active]); return { id, windowId: 2 }; },
+      create: async () => { events.push(["create"]); },
+    }, windows: {
+      update: async (id, properties) => { events.push(["focus", id, properties.focused]); },
+    } }, namespace);
+    await send.click({ windowId: 1, incognito: false });
+    assert.deepEqual(events, [["activate", 4, true], ["focus", 2, true]]);
+    assert.equal(send.warnings.length, 0);
+  });
+}
+
+for (const candidate of [
+  { url: "chrome-extension://fixture/triage.html?view=all#tabs" },
+  { url: "about:blank", pendingUrl: "chrome-extension://fixture/triage.html" },
+]) {
+  it("recognizes the dashboard's real path while loaded or pending", async () => {
+    let activated;
+    let created = false;
+    const send = background({ tabs: {
+      query: async () => [{ id: 4, windowId: 2, ...candidate }],
+      update: async (id) => { activated = id; return { id, windowId: 2 }; },
+      create: async () => { created = true; },
+    } });
+    await send.click({ windowId: 1 });
+    assert.equal(activated, 4);
+    assert.equal(created, false);
+  });
+}
+
+it("prefers the clicked window's dashboard without crossing Firefox private browsing contexts", async () => {
+  const activated = [];
+  const send = background({ tabs: {
+    query: async () => [
+      { id: 1, windowId: 7, incognito: true, url: "chrome-extension://fixture/triage.html" },
+      { id: 2, windowId: 8, incognito: false, url: "chrome-extension://fixture/triage.html" },
+      { id: 3, windowId: 7, incognito: false, url: "chrome-extension://fixture/triage.html" },
+    ],
+    update: async (id) => { activated.push(id); return { id, windowId: 7 }; },
+    create: async () => { assert.fail("reuse an existing dashboard"); },
+  } }, "browser");
+  await send.click({ windowId: 7, incognito: false });
+  await send.click({ windowId: 8, incognito: true });
+  assert.deepEqual(activated, [3, 1]);
+});
+
+it("creates an active dashboard in the clicked window only when no matching dashboard exists", async () => {
+  let created;
+  const send = background({ tabs: {
+    query: async () => [
+      { id: 1, incognito: true, url: "chrome-extension://fixture/triage.html" },
+      { id: 2, url: "https://example.com/triage.html" },
+      { id: 3, url: "chrome-extension://fixture/triage.html.backup" },
+      { id: 4, url: "chrome-extension://fixture/triage.html", pendingUrl: "https://example.com" },
+    ],
+    update: async () => { assert.fail("do not activate unrelated or departing tabs"); },
+    create: async (properties) => {
+      created = JSON.parse(JSON.stringify(properties));
+      return { id: 1, windowId: properties.windowId, url: properties.url };
+    },
+  } });
+  await send.click({ windowId: 9, incognito: false });
+  assert.deepEqual(created, { url: "chrome-extension://fixture/triage.html", active: true, windowId: 9 });
+});
+
+it("coalesces overlapping toolbar clicks and permits another click after completion", async () => {
+  const queries = [];
+  let created = 0;
+  let activated = 0;
+  const send = background({ tabs: {
+    query: () => new Promise((resolve) => { queries.push(resolve); }),
+    create: async () => { created++; return { id: 1, windowId: 7 }; },
+    update: async () => { activated++; return { id: 1, windowId: 7 }; },
+  } });
+  const first = send.click({ windowId: 7 });
+  const second = send.click({ windowId: 7 });
+  await new Promise(setImmediate);
+  const overlappingQueries = queries.length;
+  for (const resolve of queries.splice(0)) resolve([]);
+  await Promise.all([first, second]);
+  assert.equal(overlappingQueries, 1);
+  assert.equal(created, 1);
+  const third = send.click({ windowId: 7 });
+  await new Promise(setImmediate);
+  assert.equal(queries.length, 1);
+  queries[0]([{ id: 1, windowId: 7, url: "chrome-extension://fixture/triage.html" }]);
+  await third;
+  assert.equal(activated, 1);
+  assert.equal(created, 1);
+});
+
+it("keeps simultaneous Firefox regular and private launches independent", async () => {
+  const queries = [];
+  const windows = [];
+  const send = background({ tabs: {
+    query: () => new Promise((resolve) => { queries.push(resolve); }),
+    create: async (properties) => {
+      windows.push(properties.windowId);
+      return { id: properties.windowId, windowId: properties.windowId };
+    },
+  } }, "browser");
+  const opens = [
+    send.click({ windowId: 1, incognito: false }),
+    send.click({ windowId: 2, incognito: true }),
+    send.click({ windowId: 1, incognito: false }),
+    send.click({ windowId: 2, incognito: true }),
+  ];
+  await new Promise(setImmediate);
+  assert.equal(queries.length, 2);
+  for (const resolve of queries) resolve([]);
+  await Promise.all(opens);
+  assert.deepEqual(windows, [1, 2]);
+});
+
+it("reuses Chrome's regular dashboard after a spanning-mode private launch", async () => {
+  const dashboards = [];
+  const activated = [];
+  let created = 0;
+  const send = background({ tabs: {
+    query: async () => dashboards,
+    create: async (properties) => {
+      // Chrome redirects packaged extension pages into a regular window in spanning mode.
+      created++;
+      dashboards.push({ id: created, windowId: 9, incognito: false, url: properties.url });
+      return dashboards[dashboards.length - 1];
+    },
+    update: async (id) => { activated.push(id); return dashboards.find((tab) => tab.id === id); },
+  } });
+  await send.click({ windowId: 2, incognito: true });
+  await send.click({ windowId: 2, incognito: true });
+  assert.equal(created, 1);
+  assert.deepEqual(activated, [1]);
+});
+
+it("creates outside the private window and focuses the returned Chrome spanning-mode host", async () => {
+  let created;
+  const focused = [];
+  const send = background({ tabs: {
+    create: async (properties) => {
+      created = JSON.parse(JSON.stringify(properties));
+      return { id: 1, windowId: 9, incognito: false, url: properties.url };
+    },
+  }, windows: { update: async (id, properties) => { focused.push([id, properties.focused]); } } });
+  await send.click({ windowId: 2, incognito: true });
+  assert.deepEqual(created, { url: "chrome-extension://fixture/triage.html", active: true });
+  assert.deepEqual(focused, [[9, true]]);
+  assert.deepEqual(send.warnings, []);
+});
+
+it("coalesces Chrome spanning-mode regular and private clicks into one launch", async () => {
+  const queries = [];
+  let created = 0;
+  const send = background({ tabs: {
+    query: () => new Promise((resolve) => { queries.push(resolve); }),
+    create: async () => { created++; return { id: 1, windowId: 1 }; },
+  } });
+  const opens = [send.click({ windowId: 1, incognito: false }),
+    send.click({ windowId: 2, incognito: true })];
+  await new Promise(setImmediate);
+  const queryCount = queries.length;
+  for (const resolve of queries) resolve([]);
+  await Promise.all(opens);
+  assert.equal(queryCount, 1);
+  assert.equal(created, 1);
+});
+
+it("preserves private creation and reuse for an explicitly split Chrome manifest", async () => {
+  const dashboards = [];
+  const created = [];
+  const activated = [];
+  const send = background({ runtime: { getManifest: () => ({ incognito: "split" }) }, tabs: {
+    query: async () => dashboards,
+    create: async (properties) => {
+      created.push(JSON.parse(JSON.stringify(properties)));
+      dashboards.push({ id: 1, windowId: properties.windowId, incognito: true, url: properties.url });
+      return dashboards[dashboards.length - 1];
+    },
+    update: async (id) => { activated.push(id); return dashboards.find((tab) => tab.id === id); },
+  } });
+  await send.click({ windowId: 2, incognito: true });
+  await send.click({ windowId: 2, incognito: true });
+  assert.deepEqual(created, [{ url: "chrome-extension://fixture/triage.html", active: true, windowId: 2 }]);
+  assert.deepEqual(activated, [1]);
+});
+
+it("uses Chrome spanning behavior even when the browser API alias is available", async () => {
+  let created = 0;
+  const activated = [];
+  const send = background({ runtime: { getManifest: () => ({}) }, tabs: {
+    query: async () => [{ id: 1, windowId: 9, incognito: false, url: "chrome-extension://fixture/triage.html" }],
+    update: async (id) => { activated.push(id); return { id, windowId: 9 }; },
+    create: async () => { created++; },
+  } }, "browser");
+  await send.click({ windowId: 2, incognito: true });
+  assert.equal(created, 0);
+  assert.deepEqual(activated, [1]);
+});
+
+it("retains a created dashboard after focus failure and reuses it on retry", async () => {
+  const dashboards = [];
+  let creates = 0;
+  let focuses = 0;
+  const activated = [];
+  const send = background({ tabs: {
+    query: async () => dashboards,
+    create: async (properties) => {
+      creates++;
+      const tab = { id: 1, windowId: 9, incognito: false, url: properties.url };
+      dashboards.push(tab);
+      return tab;
+    },
+    update: async (id) => { activated.push(id); return dashboards.find((tab) => tab.id === id); },
+  }, windows: { update: async () => {
+    if (++focuses === 1) throw new Error("Focus denied");
+  } } });
+  await send.click({ windowId: 2, incognito: true });
+  assert.equal(creates, 1);
+  assert.equal(send.warnings.length, 1);
+  await send.click({ windowId: 2, incognito: true });
+  assert.equal(creates, 1);
+  assert.equal(focuses, 2);
+  assert.deepEqual(activated, [1]);
+  assert.equal(send.warnings.length, 1);
+});
+
+for (const stage of ["query", "activate", "focus"]) {
+  it(`contains toolbar ${stage} failures without creating duplicates and permits retry`, async () => {
+    let queries = 0;
+    let created = 0;
+    const fail = async () => { throw new Error("Operation denied"); };
+    const send = background({ tabs: {
+      query: async () => {
+        queries++;
+        if (stage === "query") return fail();
+        return [{ id: 1, windowId: 2, url: "chrome-extension://fixture/triage.html" }];
+      },
+      update: stage === "activate" ? fail : async (id) => ({ id, windowId: 2 }),
+      create: async () => { created++; },
+    }, windows: { update: stage === "focus" ? fail : async () => {} } });
+    await send.click({ windowId: 2 });
+    await send.click({ windowId: 2 });
+    assert.equal(queries, 2, "failure must release the in-flight launch");
+    assert.equal(created, 0, "do not fall back to duplicates when reuse fails");
+    assert.equal(send.warnings.length, 2);
+    assert.match(send.warnings[0].join(" "), /Operation denied/);
+  });
+}

@@ -6,7 +6,6 @@ See the [changelog](CHANGELOG.md) for released changes and the [README](README.m
 
 ## Dashboard navigation and help
 
-- Reuse and focus an existing dashboard when the extension's toolbar icon is clicked, preferring the current window and keeping regular and private browsing contexts separate.
 - Add an accessible Help / About menu with the installed extension version, concise usage guidance and links to documentation, releases, privacy information and support.
 - Create a lightweight showcase page with installation links, feature explanations and screenshots or short usage clips made with synthetic tabs. Keep shipped features distinct from planned work.
 

@@ -2,12 +2,47 @@
 // Cross-browser compatibility: Firefox exposes `browser`, Chrome exposes `chrome`
 const api = globalThis.browser || chrome;
 
-api.action.onClicked.addListener(async () => {
-  try {
-    await api.tabs.create({ url: api.runtime.getURL("triage.html") });
-  } catch (error) {
+const openingDashboards = new Map();
+
+api.action.onClicked.addListener((clickedTab) => {
+  // Chrome spanning mode hosts packaged extension pages in regular windows.
+  // Chromium can expose both API aliases; use this package's manifest instead.
+  const manifest = api.runtime.getManifest();
+  const incognito = !!clickedTab?.incognito &&
+    (!!manifest.browser_specific_settings?.gecko || manifest.incognito === "split");
+  if (openingDashboards.has(incognito)) return openingDashboards.get(incognito);
+  const opening = (async () => {
+    const url = api.runtime.getURL("triage.html");
+    const dashboards = (await api.tabs.query({})).filter((tab) =>
+      !!tab.incognito === incognito &&
+      (tab.pendingUrl || tab.url || "").split(/[?#]/)[0] === url);
+    const dashboard = dashboards.find((tab) => tab.windowId === clickedTab?.windowId) || dashboards[0];
+    if (dashboard) {
+      const activated = await api.tabs.update(dashboard.id, { active: true });
+      await api.windows.update(activated.windowId, { focused: true });
+      // Extension pages receive runtime broadcasts, except the sending context.
+      // The selected dashboard alone handles this notification, even if active.
+      try {
+        const response = await api.runtime.sendMessage({ type: "refreshDashboard", tabId: dashboard.id });
+        if (response?.ok !== true) throw new Error(response?.error || "Dashboard did not acknowledge refresh.");
+      } catch (error) {
+        // Pending navigation may not have a receiver yet; initial load reads tabs.
+        console.error("Could not refresh Tab Triage:", error?.message || "Browser operation failed.");
+      }
+    } else {
+      const properties = { url, active: true };
+      if (Number.isSafeInteger(clickedTab?.windowId) && incognito === !!clickedTab?.incognito) {
+        properties.windowId = clickedTab.windowId;
+      }
+      const created = await api.tabs.create(properties);
+      await api.windows.update(created.windowId, { focused: true });
+    }
+  })().catch((error) => {
     console.error("Could not open Tab Triage:", error?.message || "Browser operation failed.");
-  }
+  }).finally(() => openingDashboards.delete(incognito));
+  // Share in-flight opens by the context that can actually host the dashboard.
+  openingDashboards.set(incognito, opening);
+  return opening;
 });
 
 // Keep the message channel open; every supported command returns a structured result.
@@ -25,10 +60,11 @@ api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     switch (msg.type) {
       case "getTabs":
         return { ok: true, tabs: await api.tabs.query({}) };
-      case "goToTab":
-        await api.tabs.update(msg.tabId, { active: true });
-        await api.windows.update(msg.windowId, { focused: true });
+      case "goToTab": {
+        const activated = await api.tabs.update(msg.tabId, { active: true });
+        await api.windows.update(activated.windowId, { focused: true });
         break;
+      }
       case "closeTab":
         await api.tabs.remove(msg.tabId);
         break;

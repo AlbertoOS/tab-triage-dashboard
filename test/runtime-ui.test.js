@@ -5,7 +5,7 @@ const vm = require("node:vm");
 const path = require("node:path");
 
 // Only browser/DOM boundaries are mocked; execute the complete dashboard source.
-function dashboard(sendMessage, storage = {}) {
+function dashboard(sendMessage, storage = {}, browser = {}) {
   const elements = new Map();
   const timers = new Map();
   let now = 0;
@@ -58,7 +58,7 @@ function dashboard(sendMessage, storage = {}) {
         if (this.contains(activeElement)) activeElement = undefined;
         this.children = [];
       },
-      set textContent(value) { this.text = value; this.children = []; },
+      set textContent(value) { this.text = String(value); this.children = []; },
       get textContent() { return this.text || ""; },
     };
   }
@@ -86,6 +86,7 @@ function dashboard(sendMessage, storage = {}) {
     headers.push(header);
   }
   const messages = [];
+  const messageListeners = [];
   const resizeObservers = [];
   const context = vm.createContext({
     URL, console,
@@ -101,10 +102,14 @@ function dashboard(sendMessage, storage = {}) {
     clearTimeout(id) { timers.delete(id); },
     window: { addEventListener() {} },
     chrome: {
-      runtime: { getURL: () => "chrome-extension://fixture/triage.html", sendMessage: async (message) => {
-        messages.push(message);
-        return sendMessage(message);
-      } },
+      tabs: { getCurrent: async () => ({ id: 100 }), ...browser.tabs },
+      runtime: { id: "fixture", getURL: () => "chrome-extension://fixture/triage.html",
+        onMessage: { addListener(fn) { messageListeners.push(fn); } },
+        sendMessage: async (message) => {
+          messages.push(message);
+          return sendMessage(message);
+        },
+      },
       storage: { local: { get: async () => ({}), set: async () => {}, ...storage } },
     },
     document: { get activeElement() { return activeElement; },
@@ -122,7 +127,7 @@ function dashboard(sendMessage, storage = {}) {
   for (const file of ["utils.js", "triage.js"]) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, "..", file), "utf8"), context);
   }
-  return { get, messages, advanceTime, resize: () => resizeObservers.forEach((callback) => callback()),
+  return { get, messages, messageListeners, advanceTime, resize: () => resizeObservers.forEach((callback) => callback()),
     run: (code) => vm.runInContext(code, context),
     settle: () => new Promise(setImmediate) };
 }
