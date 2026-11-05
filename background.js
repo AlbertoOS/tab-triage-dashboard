@@ -6,8 +6,10 @@ const openingDashboards = new Map();
 
 api.action.onClicked.addListener((clickedTab) => {
   // Chrome spanning mode hosts packaged extension pages in regular windows.
+  // Chromium can expose both API aliases; use this package's manifest instead.
+  const manifest = api.runtime.getManifest();
   const incognito = !!clickedTab?.incognito &&
-    (!!globalThis.browser || api.runtime.getManifest().incognito === "split");
+    (!!manifest.browser_specific_settings?.gecko || manifest.incognito === "split");
   if (openingDashboards.has(incognito)) return openingDashboards.get(incognito);
   const opening = (async () => {
     const url = api.runtime.getURL("triage.html");

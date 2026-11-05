@@ -12,7 +12,7 @@ function background(overrides = {}, namespace = "chrome") {
     action: { onClicked: { addListener(fn) { click = fn; } } },
     runtime: {
       getURL: () => "chrome-extension://fixture/triage.html",
-      getManifest: () => ({}),
+      getManifest: () => namespace === "browser" ? { browser_specific_settings: { gecko: {} } } : {},
       onMessage: { addListener(fn) { listener = fn; } },
       ...overrides.runtime,
     },
@@ -288,6 +288,19 @@ it("preserves private creation and reuse for an explicitly split Chrome manifest
   await send.click({ windowId: 2, incognito: true });
   await send.click({ windowId: 2, incognito: true });
   assert.deepEqual(created, [{ url: "chrome-extension://fixture/triage.html", active: true, windowId: 2 }]);
+  assert.deepEqual(activated, [1]);
+});
+
+it("uses Chrome spanning behavior even when the browser API alias is available", async () => {
+  let created = 0;
+  const activated = [];
+  const send = background({ runtime: { getManifest: () => ({}) }, tabs: {
+    query: async () => [{ id: 1, windowId: 9, incognito: false, url: "chrome-extension://fixture/triage.html" }],
+    update: async (id) => { activated.push(id); },
+    create: async () => { created++; },
+  } }, "browser");
+  await send.click({ windowId: 2, incognito: true });
+  assert.equal(created, 0);
   assert.deepEqual(activated, [1]);
 });
 
