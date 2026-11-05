@@ -4,7 +4,39 @@ Released changes are listed here; proposed work lives in the [roadmap](ROADMAP.m
 GitHub release versions and browser-store versions can differ while store review is pending.
 See [GitHub Releases](https://github.com/AlbertoOS/tab-triage-dashboard/releases) for release notes and downloads, including earlier versions not summarized here.
 
-## [1.4.1](https://github.com/AlbertoOS/tab-triage-dashboard/releases/tag/v1.4.1)
+## [1.4.4](https://github.com/AlbertoOS/tab-triage-dashboard/releases/tag/v1.4.4) — 2026-11-04
+
+### Tab management
+
+- Fix Age sorting to use numeric elapsed time, with oldest tabs first by default.
+- Cycle each sort column through its default direction, reverse direction and off. Title and Domain start A–Z; other columns start descending. Preserve multi-column priorities when a sort is removed.
+
+### Release reliability
+
+- Add bounded diagnostics for release planning, package verification and browser-store publication without logging credentials or raw provider responses.
+- Distinguish an uncertain dispatch from a confirmed failure, and keep unavailable diagnostic output from changing publication results.
+
+[Full comparison](https://github.com/AlbertoOS/tab-triage-dashboard/compare/v1.4.3...v1.4.4)
+
+## [1.4.3](https://github.com/AlbertoOS/tab-triage-dashboard/releases/tag/v1.4.3) — 2026-11-02
+
+### Development toolchain
+
+- Adopt Node.js 26 LTS and enforce a minimum of 26.13.0 in package metadata, version selectors and CI.
+- Update development dependencies, including js-yaml, undici and fast-uri. These are tooling changes, not new extension runtime permissions or dependencies.
+
+[Full comparison](https://github.com/AlbertoOS/tab-triage-dashboard/compare/v1.4.2...v1.4.3)
+
+## [1.4.2](https://github.com/AlbertoOS/tab-triage-dashboard/releases/tag/v1.4.2) — 2026-11-02
+
+### Firefox publication
+
+- Accept formatting-only changes to Mozilla-signed manifest JSON while retaining strict typed-value comparison and exact checks for the other application files.
+- Preserve numeric precision and reject unsupported manifest encodings, ambiguous JSON and unexpected package contents during readback verification.
+
+[Full comparison](https://github.com/AlbertoOS/tab-triage-dashboard/compare/v1.4.1...v1.4.2)
+
+## [1.4.1](https://github.com/AlbertoOS/tab-triage-dashboard/releases/tag/v1.4.1) — 2026-11-02
 
 ### Release automation
 
@@ -24,7 +56,7 @@ See [GitHub Releases](https://github.com/AlbertoOS/tab-triage-dashboard/releases
 
 [Full comparison](https://github.com/AlbertoOS/tab-triage-dashboard/compare/v1.4.0...v1.4.1)
 
-## [1.4.0](https://github.com/AlbertoOS/tab-triage-dashboard/releases/tag/v1.4.0)
+## [1.4.0](https://github.com/AlbertoOS/tab-triage-dashboard/releases/tag/v1.4.0) — 2026-10-29
 
 ### Tab management
 
