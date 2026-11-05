@@ -4,10 +4,12 @@ Never print subprocess/HTTP responses or exception text: those may contain secre
 """
 
 import base64
+from decimal import Decimal, DecimalException
 import hashlib
 import hmac
 import io
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -21,6 +23,7 @@ import urllib.request
 import uuid
 import zipfile
 from typing import Any
+from workflow_diagnostics import emit as store_diagnostic, write_record as write_chrome_diagnostic
 
 ROOT = Path(__file__).resolve().parents[1]
 GUID = "tab-triage-dashboard@albertoos"
@@ -145,6 +148,57 @@ def zip_entries(raw):
     return entries
 
 
+def canonical_manifest(raw):
+    negative_integer_zero = object()
+
+    def object_pairs(pairs):
+        result = {}
+        for key, value in pairs:
+            require(key not in result, "Manifest JSON has duplicate keys.")
+            result[key] = value
+        return result
+
+    def reject_constant(value):
+        raise Failure("Manifest JSON contains a non-finite number.")
+
+    def exact_decimal(token):
+        value = Decimal(token)
+        require(
+            value.is_finite() and math.isfinite(float(value)),
+            "Manifest JSON contains a non-finite number.",
+        )
+        return value
+
+    def exact_integer(token):
+        # JSON.parse preserves integer-spelled negative zero; Python int does not.
+        return negative_integer_zero if token == "-0" else int(token)
+
+    def typed_value(value):
+        if value is negative_integer_zero:
+            return (int, 0, True)
+        if type(value) is dict:
+            return (dict, {key: typed_value(item) for key, item in value.items()})
+        if type(value) is list:
+            return (list, tuple(typed_value(item) for item in value))
+        if type(value) is Decimal and value.is_zero():
+            return (Decimal, value, value.is_signed())
+        return (type(value), value)
+
+    try:
+        value = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=object_pairs,
+            parse_constant=reject_constant,
+            parse_float=exact_decimal,
+            parse_int=exact_integer,
+        )
+        require(type(value) is dict, "Manifest JSON must be an object.")
+        # Type tags prevent bool/int equality; Decimal retains exact numeric values.
+        return typed_value(value)
+    except (ValueError, UnicodeError, RecursionError, DecimalException, OverflowError):
+        raise Failure("Manifest JSON is invalid or contains a non-finite number.") from None
+
+
 def verify_zip(raw, expected, signed=False):
     entries = zip_entries(raw)
     # Directory metadata is not executable/content; permit only real parent directories.
@@ -160,7 +214,14 @@ def verify_zip(raw, expected, signed=False):
         elif signed and name in SIGNATURES:
             del entries[name]
     require(
-        entries == expected,
+        entries.keys() == expected.keys()
+        and (not signed or "manifest.json" in expected)
+        and all(
+            canonical_manifest(entries[name]) == canonical_manifest(data)
+            if signed and name == "manifest.json"
+            else entries[name] == data
+            for name, data in expected.items()
+        ),
         "Archive inventory/content differs from exact tagged Git blobs.",
     )
 
@@ -268,8 +329,12 @@ def release_identity(tag):
 
 
 def verify_release(tag, output):
+    store_diagnostic("release", "verify_release", "start")
+    store_diagnostic("release", "metadata", "start")
     tag_value(tag)
     release, oid, commit = release_identity(tag)
+    store_diagnostic("release", "metadata", "complete", commit=commit, asset_count=len(release["assets"]))
+    store_diagnostic("release", "tag", "start")
     # Do not execute, checkout, or extract tag scripts, attributes, or hooks.
     git(
         "-c",
@@ -290,18 +355,24 @@ def verify_release(tag, output):
         "Live tag changed during source fetch.",
     )
     git("merge-base", "--is-ancestor", commit, "refs/store-publish/main")
+    store_diagnostic("release", "tag", "complete", commit=commit)
+    store_diagnostic("release", "source", "start")
     blobs = {}
     for browser in ("firefox", "chrome"):
         version, blobs[browser] = source_files(commit, browser)
         require(
             version == tag.removeprefix("v"), "Tag and tagged source version differ."
         )
+    store_diagnostic("release", "source", "complete", version=version, count=len(blobs["firefox"]))
+    store_diagnostic("release", "assets", "start")
     downloads = {}
     repo = os.environ["GITHUB_REPOSITORY"]
     for asset in release["assets"]:
         raw = gh(f"repos/{repo}/releases/assets/{asset['id']}", binary=True)
         require(len(raw) == asset["size"], "Downloaded release asset size differs.")
         downloads[asset["name"]] = raw
+    store_diagnostic("release", "assets", "complete", asset_count=len(downloads))
+    store_diagnostic("release", "provenance", "start")
     provenance = json.loads(downloads["provenance.json"])
     hashes = {name: digest(downloads[name]) for name in ZIP_NAMES}
     require(
@@ -315,8 +386,11 @@ def verify_release(tag, output):
         },
         "Release provenance does not bind exact tag identities and archive SHA256.",
     )
+    store_diagnostic("release", "provenance", "complete")
     for browser, name in zip(("firefox", "chrome"), ZIP_NAMES):
+        store_diagnostic(browser, "archive", "start")
         verify_zip(downloads[name], blobs[browser])
+        store_diagnostic(browser, "archive", "complete", digest=hashes[name])
     # Fence replacement of either an annotated tag or release assets mid-verification.
     again, again_oid, again_commit = release_identity(tag)
     require(
@@ -342,11 +416,14 @@ def verify_release(tag, output):
         "releaseId": release["id"],
         "assetIds": {a["name"]: a["id"] for a in release["assets"]},
     }
+    store_diagnostic("release", "receipt", "start")
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True, mode=0o700)
     for name, data in downloads.items():
         (output / name).write_bytes(data)
     (output / "verified.json").write_text(json.dumps(receipt))
+    store_diagnostic("release", "receipt", "complete")
+    store_diagnostic("release", "verify_release", "complete", version=version, commit=commit)
     return receipt, blobs
 
 
@@ -362,12 +439,14 @@ def fence(receipt):
 
 
 def prerequisites(browser, env=None):
+    store_diagnostic(browser, "prerequisites", "start")
     env = os.environ if env is None else env
     if browser == "firefox":
         require(
             env.get("WEB_EXT_API_KEY") and env.get("WEB_EXT_API_SECRET"),
             "Configure WEB_EXT_API_KEY and WEB_EXT_API_SECRET in firefox-release.",
         )
+        store_diagnostic(browser, "prerequisites", "complete")
         return
     require(
         env.get("CWS_PUBLISHER_ID") and env.get("CWS_EXTENSION_ID"),
@@ -389,6 +468,7 @@ def prerequisites(browser, env=None):
         ),
         "Configure keyless provider and service account variables in chrome-release.",
     )
+    store_diagnostic(browser, "prerequisites", "complete")
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -437,6 +517,13 @@ def http(
                 )
                 url = target
                 continue
+            if url.startswith((CWS, AMO, *download_prefixes)):
+                record = {
+                    "http_status": code if type(code) is int and 100 <= code <= 599 else "unknown",
+                    "method": method if method in ("GET", "POST") else "unknown",
+                }
+                prefix = "Chrome HTTP diagnostic: " if url.startswith(CWS) else "Firefox HTTP diagnostic: "
+                write_chrome_diagnostic(prefix, record)
             raise Failure(
                 "Store HTTP request failed; inspect the developer dashboard (raw response suppressed)."
             ) from None
@@ -503,19 +590,64 @@ def amo_readback(version, expected, uploaded=None):
         url.startswith("https://addons.mozilla.org/firefox/downloads/file/"),
         "AMO file download URL has an unexpected origin/path.",
     )
+    firefox_diagnostic("archive", "start", version.get("version"))
     raw = http(url, binary=True)
     require(
         file.get("hash") == "sha256:" + digest(raw),
         "AMO file SHA256 readback differs from API metadata.",
     )
     verify_zip(raw, expected, signed=True)
+    firefox_diagnostic("archive", "complete", version.get("version"))
     return "public" if state == "public" else "submitted-for-review"
+
+
+def firefox_diagnostic(stage, event, version, status=None):
+    """Project Firefox status without identities, URLs or validation messages."""
+    def safe_version(value):
+        return value if type(value) is str and len(value) <= 32 and re.fullmatch(
+            r"[0-9]{1,5}(?:\.[0-9]{1,5}){2,3}", value
+        ) and all(int(part) <= 65535 for part in value.split(".")) else "invalid"
+
+    record: dict[str, Any] = {
+        "component": "firefox",
+        "stage": stage if stage in ("preflight", "upload", "validation", "version_create", "readback", "archive") else "unknown",
+        "event": event if event in ("start", "response", "complete", "uncertain") else "unknown",
+        "version": safe_version(version),
+    }
+    if event == "response":
+        record["present"] = status is not None
+        if type(status) is dict:
+            for key in ("processed", "valid"):
+                if key in status:
+                    record[key] = status[key] if type(status[key]) is bool else "unknown"
+            if "version" in status:
+                record["observed_version"] = safe_version(status["version"])
+                record["version_matches"] = status["version"] == version
+            if "channel" in status:
+                record["channel"] = status["channel"] if type(status["channel"]) is str and status["channel"] in ("listed", "unlisted") else "unknown"
+            file = status.get("file")
+            if type(file) is dict:
+                state = file.get("status")
+                record["file_state"] = state if type(state) is str and state in ("public", "unreviewed", "disabled") else "unknown"
+            validation = status.get("validation")
+            if type(validation) is dict:
+                for key in ("errors", "warnings"):
+                    values = validation.get(key)
+                    if type(values) is list:
+                        record["error_count" if key == "errors" else "warning_count"] = len(values) if len(values) <= 65535 else "unknown"
+                    elif type(values) is int:
+                        record["error_count" if key == "errors" else "warning_count"] = values if 0 <= values <= 65535 else "unknown"
+        elif status is not None:
+            record["schema"] = "unexpected"
+    write_chrome_diagnostic("Workflow diagnostic: ", record)
 
 
 def publish_firefox(receipt, expected, raw):
     version = receipt["version"]
     base = "addons/addon/" + urllib.parse.quote(GUID, safe="") + "/versions/"
+    firefox_diagnostic("preflight", "start", version)
     existing = amo(base + version + "/", missing=True)
+    firefox_diagnostic("preflight", "response", version, existing)
     if existing is not None:
         require(existing.get("version") == version, "AMO returned a different version.")
         return amo_readback(existing, expected, raw)
@@ -528,19 +660,23 @@ def publish_firefox(receipt, expected, raw):
         + f"\r\n--{boundary}--\r\n".encode()
     )
     fence(receipt)
+    firefox_diagnostic("upload", "start", version)
     upload = http(
         AMO + "addons/upload/",
         "POST",
         data,
         {**amo_headers(), "Content-Type": "multipart/form-data; boundary=" + boundary},
     )
+    firefox_diagnostic("upload", "response", version, upload)
     upload_id = upload.get("uuid", "")
     require(
         re.fullmatch(r"[0-9a-f]{32}", upload_id),
         "AMO returned an invalid upload identity.",
     )
     for attempt in range(POLL_COUNT):
+        firefox_diagnostic("validation", "start", version)
         status = amo(f"addons/upload/{upload_id}/")
+        firefox_diagnostic("validation", "response", version, status)
         if status.get("processed") is True:
             require(
                 status.get("valid") is True
@@ -555,10 +691,14 @@ def publish_firefox(receipt, expected, raw):
             "AMO validation timed out; inspect upload status before retrying."
         )
     fence(receipt)
-    amo(base, "POST", {"upload": upload_id})
+    firefox_diagnostic("version_create", "start", version)
+    created = amo(base, "POST", {"upload": upload_id})
+    firefox_diagnostic("version_create", "response", version, created)
     # Always read back the exact version, not latest/current_version.
     for attempt in range(POLL_COUNT):
+        firefox_diagnostic("readback", "start", version)
         current = amo(base + version + "/", missing=True)
+        firefox_diagnostic("readback", "response", version, current)
         if current is not None:
             require(
                 current.get("version") == version,
@@ -575,7 +715,9 @@ def publish_firefox(receipt, expected, raw):
                 current.get("file", {}).get("url")
                 or current.get("file", {}).get("hash") == "sha256:" + digest(raw)
             ):
-                return amo_readback(current, expected, raw)
+                result = amo_readback(current, expected, raw)
+                firefox_diagnostic("readback", "complete", version)
+                return result
         time.sleep(POLL_SECONDS)
     raise Failure(
         "AMO submission readback timed out; submission may exist, inspect before retrying."
@@ -629,6 +771,69 @@ def chrome_state(status, version):
     return None
 
 
+def chrome_diagnostic(stage, event, version, status=None):
+    """Log a bounded projection, never raw API data or credential fields."""
+    require(
+        stage in ("preflight", "upload", "upload_poll", "publish", "readback")
+        and event in ("start", "response", "complete"),
+        "Invalid Chrome diagnostic stage/event.",
+    )
+
+    def safe_version(value):
+        return (
+            type(value) is str
+            and len(value) <= 32
+            and re.fullmatch(r"[0-9]{1,5}(?:\.[0-9]{1,5}){2,3}", value) is not None
+            and all(int(part) <= 65535 for part in value.split("."))
+        )
+
+    def safe_state(value, allowed):
+        return value if type(value) is str and value in allowed else "unknown"
+
+    record = {
+        "stage": stage, "event": event,
+        "target_version": version if safe_version(version) else "invalid",
+    }
+    if event == "start":
+        record["runtime"] = "python " + ".".join(map(str, sys.version_info[:3]))
+    if status is not None or event == "response" and stage != "publish":
+        if type(status) is not dict:
+            record["schema"] = "unexpected"
+        else:
+            for key, label in (
+                ("publishedItemRevisionStatus", "published"),
+                ("submittedItemRevisionStatus", "submitted"),
+            ):
+                revision = status.get(key)
+                state, versions = "absent", []
+                if revision is not None:
+                    state = "unknown"
+                    if type(revision) is dict:
+                        state = safe_state(revision.get("state"), {
+                            "PUBLISHED", "PUBLISHED_TO_TESTERS", "PENDING_REVIEW",
+                            "STAGED", "REJECTED", "CANCELLED", "ITEM_STATE_UNSPECIFIED",
+                        })
+                        channels = revision.get("distributionChannels")
+                        if type(channels) is list:
+                            versions = sorted({
+                                channel["crxVersion"] for channel in channels[:8]
+                                if type(channel) is dict
+                                and safe_version(channel.get("crxVersion"))
+                            })
+                record[label] = {"state": state, "versions": versions}
+            record["upload_state"] = safe_state(
+                status.get("uploadState", status.get("lastAsyncUploadState")),
+                {"SUCCEEDED", "IN_PROGRESS", "FAILED", "UPLOAD_STATE_UNSPECIFIED"},
+            )
+            for key, label in (("warned", "warned"), ("takenDown", "taken_down")):
+                value = status.get(key, False)
+                record[label] = value if type(value) is bool else "unknown"
+            if "crxVersion" in status:
+                value = status["crxVersion"]
+                record["uploaded_version"] = value if safe_version(value) else "invalid"
+    write_chrome_diagnostic("Chrome diagnostic: ", record)
+
+
 def publish_chrome(receipt, expected, raw):
     require(
         os.environ.get("CWS_ACCESS_TOKEN"),
@@ -636,7 +841,9 @@ def publish_chrome(receipt, expected, raw):
     )
     name = f"publishers/{os.environ['CWS_PUBLISHER_ID']}/items/{os.environ['CWS_EXTENSION_ID']}"
     version = receipt["version"]
+    chrome_diagnostic("preflight", "start", version)
     status = chrome(name + ":fetchStatus")
+    chrome_diagnostic("preflight", "response", version, status)
     require(
         status.get("name") == name
         and status.get("itemId") == os.environ["CWS_EXTENSION_ID"],
@@ -661,7 +868,9 @@ def publish_chrome(receipt, expected, raw):
         "Chrome has an asynchronous upload in progress; inspect dashboard before retrying.",
     )
     fence(receipt)
+    chrome_diagnostic("upload", "start", version)
     upload = chrome(name + ":upload", "POST", raw=raw)
+    chrome_diagnostic("upload", "response", version, upload)
     require(
         upload.get("name") == name
         and upload.get("itemId") == os.environ["CWS_EXTENSION_ID"],
@@ -681,12 +890,16 @@ def publish_chrome(receipt, expected, raw):
         # Async status exposes processing state, not the draft version. The final
         # submission must still read back this run's exact version below.
         for attempt in range(POLL_COUNT):
-            state = chrome(name + ":fetchStatus").get("lastAsyncUploadState")
+            chrome_diagnostic("upload_poll", "start", version)
+            upload_status = chrome(name + ":fetchStatus")
+            chrome_diagnostic("upload_poll", "response", version, upload_status)
+            state = upload_status.get("lastAsyncUploadState")
             if state != "IN_PROGRESS":
                 break
             time.sleep(POLL_SECONDS)
         require(state == "SUCCEEDED", "Chrome asynchronous upload failed/timed out.")
     fence(receipt)
+    chrome_diagnostic("publish", "start", version)
     chrome(
         name + ":publish",
         "POST",
@@ -697,8 +910,11 @@ def publish_chrome(receipt, expected, raw):
             "deployInfos": [{"deployPercentage": 100}],
         },
     )
+    chrome_diagnostic("publish", "response", version)
     for attempt in range(POLL_COUNT):
+        chrome_diagnostic("readback", "start", version)
         current = chrome(name + ":fetchStatus")
+        chrome_diagnostic("readback", "response", version, current)
         require(
             current.get("name") == name
             and current.get("itemId") == os.environ["CWS_EXTENSION_ID"],
@@ -706,6 +922,7 @@ def publish_chrome(receipt, expected, raw):
         )
         result = chrome_state(current, version)
         if result:
+            chrome_diagnostic("readback", "complete", version)
             return result
         time.sleep(POLL_SECONDS)
     raise Failure(
@@ -721,7 +938,9 @@ def main(argv=None):
     )
     operation, browser = argv
     os.umask(0o077)
+    store_diagnostic(browser, "context", "start", runtime_version=".".join(map(str, sys.version_info[:3])))
     guard(browser)
+    store_diagnostic(browser, "context", "complete")
     if operation == "prerequisites":
         prerequisites(browser)
         print(
@@ -754,8 +973,12 @@ def main(argv=None):
     message = f"{browser}: {result}; version {receipt['version']}; source {receipt['commit']}; archive sha256 {digest(raw)}"
     print(message)
     if os.environ.get("GITHUB_STEP_SUMMARY"):
-        with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
-            summary.write(message + "\n")
+        try:
+            with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+                summary.write(message + "\n")
+        except (OSError, ValueError):
+            # The accepted provider result does not depend on a summary sink.
+            pass
 
 
 if __name__ == "__main__":

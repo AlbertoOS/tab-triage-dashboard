@@ -139,7 +139,7 @@ finally:
     const attempts = JSON.parse(result.stdout.match(/DISPATCH_ATTEMPTS=(.*)/)[1]);
     assert.deepEqual(attempts, ["repos/owner/repo/actions/workflows/publish-firefox.yml/dispatches", "repos/owner/repo/actions/workflows/publish-chrome.yml/dispatches"]);
     assert.doesNotMatch(result.stdout + result.stderr, /synthetic-sensitive-response|Traceback/);
-    assert.match(result.stderr, /failed for firefox;/);
+    assert.match(result.stderr, /not confirmed for firefox;/);
   }
 });
 

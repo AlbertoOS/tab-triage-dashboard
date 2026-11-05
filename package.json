@@ -1,8 +1,11 @@
 {
   "private": true,
   "name": "tab-triage-dashboard",
-  "version": "1.4.1",
+  "version": "1.4.4",
   "description": "Triage your tabs — sort by age, filter by status, group by domain, and close duplicates. A bit of organization to a tab chaos. :)",
+  "engines": {
+    "node": ">=26.13.0 <27"
+  },
   "scripts": {
     "zip": "bash build-zip.sh all",
     "zip:firefox": "bash build-zip.sh firefox",

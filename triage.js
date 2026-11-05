@@ -848,24 +848,24 @@ document.getElementById("closeSelected").addEventListener("click", closeSelected
 document.getElementById("exportSelected").addEventListener("click", () => exportLinks(true));
 document.getElementById("exportAll").addEventListener("click", () => exportLinks(false));
 
-// Sort on header click — three-state cycle: desc → asc → off
+// Sort on header click — default direction → opposite direction → off
 // Multiple columns supported; click adds to sort, existing column cycles
 document.querySelector("thead").addEventListener("click", (e) => {
   const th = e.target.closest("th.sortable");
   if (!th) return;
   const key = th.dataset.sort;
+  const defaultDir = key === "title" || key === "domain" ? "asc" : "desc";
 
   const existingIdx = currentSort.findIndex((s) => s.key === key);
   if (existingIdx === -1) {
     // New column: add with default direction
-    const dir = key === "title" || key === "domain" ? "asc" : "desc";
-    currentSort.push({ key, dir });
+    currentSort.push({ key, dir: defaultDir });
   } else {
     const existing = currentSort[existingIdx];
-    if (existing.dir === "desc") {
-      existing.dir = "asc";
+    if (existing.dir === defaultDir) {
+      existing.dir = defaultDir === "asc" ? "desc" : "asc";
     } else {
-      // Was asc, remove it (back to default)
+      // Both directions visited; remove only this column's sort.
       currentSort.splice(existingIdx, 1);
     }
   }

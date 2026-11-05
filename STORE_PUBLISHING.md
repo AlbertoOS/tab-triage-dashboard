@@ -65,11 +65,48 @@ The credentialless `publish-stores.yml` coordinator listens only to `release.pub
 
 Both credential jobs and their verification jobs require `workflow_dispatch`, branch ref `refs/heads/main`, and ref type `branch`. The Python entrypoint independently enforces the exact workflow identity. PR, PR-target, topic-branch, and tag runs cannot reach credentials. Only the Chrome publication job has `id-token: write`. Store credentials are passed only to the upload/readback step (the preceding Chrome auth step mints its token); they are never passed to builds, selected-tag code, or tests.
 
+## Safe diagnostics
+
+Release planning, GitHub release publishing, passive package verification and store
+publication emit structured phase records to stderr with the prefix
+`Workflow diagnostic: `. Chrome also emits `Chrome diagnostic: ` records with a
+bounded projection of its revision/upload states. Failed store HTTP requests emit
+`Chrome HTTP diagnostic: ` or `Firefox HTTP diagnostic: ` with only the numeric
+HTTP status and an allowlisted method. Workflow steps show installed runtime
+versions without dumping the environment.
+
+Use each record's component, stage and event fields to locate the failing boundary.
+Passive package verification records metadata, tag ancestry, source parity, asset
+download, provenance and archive checks separately. Firefox's `Workflow diagnostic: `
+records report processed/valid flags, version matching, normalized channel/file state, and
+aggregate validation error/warning counts—not validation messages. Dispatch reports
+acknowledged, failed or uncertain attempts; an acknowledged dispatch is not store
+publication, and a timeout is not proof that the remote operation failed.
+
+Only allowlisted fields are logged: static labels, bounded ASCII versions and tags,
+public commit/digest values, bounded numbers and literal `true`/`false` booleans.
+Shared records omit rejected metadata; the store status projections substitute
+`unknown` or `invalid` where appropriate. Rejected values are never echoed.
+Tokens, authorization headers, raw provider/subprocess responses,
+signed URLs, account identities, private paths, archive contents and full commit
+messages are excluded. GitHub secret masking is an additional safeguard, not the
+disclosure boundary. Do not enable global Actions debug flags to expose excluded
+details.
+
+Diagnostic and job-summary sink failures are best-effort and cannot interrupt a
+store write/readback or replace its sanitized error. Missing phase output does not
+prove that an operation was never attempted. These records do not add API calls,
+change guards or introduce retries; after an uncertain write, inspect authoritative
+provider state before deciding what to repeat. Ordinary stdout/result schemas remain
+unchanged.
+
 ## Results and retries
 
 Each provider polls at most 30 times per validation/readback phase, with 10-second intervals and 60-second HTTP deadlines. Publication jobs have a 20-minute overall deadline. Polling stops once the exact version's accepted state is read back; it does not wait indefinitely for human review.
 
-- **Firefox:** An existing exact version is never uploaded again. Its enabled listed channel and file identity must match the selected source: either its API SHA-256 equals the verified release archive exactly, or the downloaded signed archive passes checksum and content-parity verification. Pending unsigned files need not be publicly downloadable yet. Only known Mozilla signature files may differ from the unsigned package. New uploads must pass AMO validation before version creation; the exact version is then fetched again and its content checked. `unreviewed` is reported as **submitted-for-review**, not public; `public` is reported only for an approved file. Rejected/disabled versions fail. Downloads have no authorization header and only bounded HTTPS redirects to Mozilla download/CDN paths are permitted.
+- **Firefox:** An existing exact version is never uploaded again. Its enabled listed channel and file identity must match the selected source: either its API SHA-256 equals the verified release archive exactly, or the downloaded signed archive passes checksum and content-parity verification. Pending unsigned files need not be publicly downloadable yet.
+  Signed archives may add only known Mozilla signature files. Their `manifest.json` may differ only in UTF-8 JSON serialization, such as whitespace, object-key order and equivalent escapes. Both manifests must parse strictly as top-level objects whose values and types match recursively, including array order. Duplicate keys, invalid JSON and non-finite numbers are rejected. All other application files must match byte-for-byte; the path inventory must match apart from the permitted signature files. Unsigned archives must match byte-for-byte for every file, including the manifest.
+  New uploads must pass AMO validation before version creation; the exact version is then fetched again and its content checked. `unreviewed` is reported as **submitted-for-review**, not public; `public` is reported only for an approved file. Rejected/disabled versions fail. Downloads have no authorization header and only bounded HTTPS redirects to Mozilla download/CDN paths are permitted.
 - **Chrome:** The official v2 API returns upload version/state and exact-version publication status but **does not expose a package digest or draft download**. A new upload sends the verified release bytes, waits for upload completion, submits for automatic publication after review (`DEFAULT_PUBLISH`, review enabled, warnings blocking, 100% rollout), then reads back the exact item and version. `PENDING_REVIEW`, `STAGED`, `PUBLISHED` and `PUBLISHED_TO_TESTERS` remain distinct. Tester-only availability is reported as `published-to-testers`, not public. Published visibility remains whatever the dashboard configured.
 - **Conservative Chrome retry:** An already submitted/published equal version is not proof of package identity. The workflow fails without reuploading or claiming success, including rejected/cancelled equal versions. A previous rejected/cancelled submission does not block a different corrected version; active (`PENDING_REVIEW`, `STAGED`) or unknown submission states do. An in-progress upload or a policy warning/takedown also stops publication. After an interrupted upload, the API can reject a repeated draft version; the workflow never cancels or replaces that draft to get around the conflict. Inspect/reconcile the exact package in the dashboard rather than blindly retrying or bumping the version to evade the check. This deliberate failure avoids unverifiable idempotency claims.
 
