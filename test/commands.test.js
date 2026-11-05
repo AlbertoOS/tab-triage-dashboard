@@ -17,6 +17,7 @@ function background(overrides = {}, namespace = "chrome") {
       ...overrides.runtime,
     },
     tabs: { query: async () => [], remove: async () => {},
+      create: async (properties) => ({ id: 1, windowId: properties.windowId ?? 1, url: properties.url }),
       get: async (id) => ({ id, active: false, discarded: false }), ...overrides.tabs },
     windows: { update: async () => {}, ...overrides.windows },
     sessions: overrides.sessions,
@@ -176,7 +177,10 @@ it("creates an active dashboard in the clicked window only when no matching dash
       { id: 4, url: "chrome-extension://fixture/triage.html", pendingUrl: "https://example.com" },
     ],
     update: async () => { assert.fail("do not activate unrelated or departing tabs"); },
-    create: async (properties) => { created = JSON.parse(JSON.stringify(properties)); },
+    create: async (properties) => {
+      created = JSON.parse(JSON.stringify(properties));
+      return { id: 1, windowId: properties.windowId, url: properties.url };
+    },
   } });
   await send.click({ windowId: 9, incognito: false });
   assert.deepEqual(created, { url: "chrome-extension://fixture/triage.html", active: true, windowId: 9 });
@@ -188,7 +192,7 @@ it("coalesces overlapping toolbar clicks and permits another click after complet
   let activated = 0;
   const send = background({ tabs: {
     query: () => new Promise((resolve) => { queries.push(resolve); }),
-    create: async () => { created++; },
+    create: async () => { created++; return { id: 1, windowId: 7 }; },
     update: async () => { activated++; },
   } });
   const first = send.click({ windowId: 7 });
@@ -213,7 +217,10 @@ it("keeps simultaneous Firefox regular and private launches independent", async 
   const windows = [];
   const send = background({ tabs: {
     query: () => new Promise((resolve) => { queries.push(resolve); }),
-    create: async (properties) => { windows.push(properties.windowId); },
+    create: async (properties) => {
+      windows.push(properties.windowId);
+      return { id: properties.windowId, windowId: properties.windowId };
+    },
   } }, "browser");
   const opens = [
     send.click({ windowId: 1, incognito: false }),
@@ -238,6 +245,7 @@ it("reuses Chrome's regular dashboard after a spanning-mode private launch", asy
       // Chrome redirects packaged extension pages into a regular window in spanning mode.
       created++;
       dashboards.push({ id: created, windowId: 9, incognito: false, url: properties.url });
+      return dashboards[dashboards.length - 1];
     },
     update: async (id) => { activated.push(id); },
   } });
@@ -247,13 +255,19 @@ it("reuses Chrome's regular dashboard after a spanning-mode private launch", asy
   assert.deepEqual(activated, [1]);
 });
 
-it("does not request a private host window for a new Chrome spanning-mode dashboard", async () => {
+it("creates outside the private window and focuses the returned Chrome spanning-mode host", async () => {
   let created;
+  const focused = [];
   const send = background({ tabs: {
-    create: async (properties) => { created = JSON.parse(JSON.stringify(properties)); },
-  } });
+    create: async (properties) => {
+      created = JSON.parse(JSON.stringify(properties));
+      return { id: 1, windowId: 9, incognito: false, url: properties.url };
+    },
+  }, windows: { update: async (id, properties) => { focused.push([id, properties.focused]); } } });
   await send.click({ windowId: 2, incognito: true });
   assert.deepEqual(created, { url: "chrome-extension://fixture/triage.html", active: true });
+  assert.deepEqual(focused, [[9, true]]);
+  assert.deepEqual(send.warnings, []);
 });
 
 it("coalesces Chrome spanning-mode regular and private clicks into one launch", async () => {
@@ -261,7 +275,7 @@ it("coalesces Chrome spanning-mode regular and private clicks into one launch", 
   let created = 0;
   const send = background({ tabs: {
     query: () => new Promise((resolve) => { queries.push(resolve); }),
-    create: async () => { created++; },
+    create: async () => { created++; return { id: 1, windowId: 1 }; },
   } });
   const opens = [send.click({ windowId: 1, incognito: false }),
     send.click({ windowId: 2, incognito: true })];
@@ -282,6 +296,7 @@ it("preserves private creation and reuse for an explicitly split Chrome manifest
     create: async (properties) => {
       created.push(JSON.parse(JSON.stringify(properties)));
       dashboards.push({ id: 1, windowId: properties.windowId, incognito: true, url: properties.url });
+      return dashboards[dashboards.length - 1];
     },
     update: async (id) => { activated.push(id); },
   } });
@@ -302,6 +317,33 @@ it("uses Chrome spanning behavior even when the browser API alias is available",
   await send.click({ windowId: 2, incognito: true });
   assert.equal(created, 0);
   assert.deepEqual(activated, [1]);
+});
+
+it("retains a created dashboard after focus failure and reuses it on retry", async () => {
+  const dashboards = [];
+  let creates = 0;
+  let focuses = 0;
+  const activated = [];
+  const send = background({ tabs: {
+    query: async () => dashboards,
+    create: async (properties) => {
+      creates++;
+      const tab = { id: 1, windowId: 9, incognito: false, url: properties.url };
+      dashboards.push(tab);
+      return tab;
+    },
+    update: async (id) => { activated.push(id); },
+  }, windows: { update: async () => {
+    if (++focuses === 1) throw new Error("Focus denied");
+  } } });
+  await send.click({ windowId: 2, incognito: true });
+  assert.equal(creates, 1);
+  assert.equal(send.warnings.length, 1);
+  await send.click({ windowId: 2, incognito: true });
+  assert.equal(creates, 1);
+  assert.equal(focuses, 2);
+  assert.deepEqual(activated, [1]);
+  assert.equal(send.warnings.length, 1);
 });
 
 for (const stage of ["query", "activate", "focus"]) {

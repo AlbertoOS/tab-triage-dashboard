@@ -25,7 +25,8 @@ api.action.onClicked.addListener((clickedTab) => {
       if (Number.isSafeInteger(clickedTab?.windowId) && incognito === !!clickedTab?.incognito) {
         properties.windowId = clickedTab.windowId;
       }
-      await api.tabs.create(properties);
+      const created = await api.tabs.create(properties);
+      await api.windows.update(created.windowId, { focused: true });
     }
   })().catch((error) => {
     console.error("Could not open Tab Triage:", error?.message || "Browser operation failed.");
