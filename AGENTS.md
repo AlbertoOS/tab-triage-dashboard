@@ -2,20 +2,20 @@
 
 ## Project Overview
 
-**Tab Triage Dashboard** is a Manifest V3 WebExtension for Firefox and Chrome that manages and triages large numbers of browser tabs (1000+). It opens a full-page tab manager with sorting, filtering, clustering, grouping, and search.
+**Tab Triage Dashboard** is a Manifest V3 WebExtension for Firefox and Chrome that manages and triages large numbers of browser tabs (1000+). It opens a full-page tab manager with sorting, filtering, display clusters, and search.
 
 ## Architecture
 
 ```
-background.js        → Minimal message broker (open triage page, tab CRUD)
+background.js        → Dashboard launch and tab queries/actions
 triage.html          → Single-page UI shell
-triage.js            → All frontend logic (~850 lines, single file)
-triage.css           → Catppuccin Macchiato dark theme (~720 lines)
+triage.js            → Frontend logic (single file)
+triage.css           → Catppuccin Macchiato dark theme
 manifest.firefox.json → Firefox Manifest V3 configuration
 manifest.chrome.json  → Chrome Manifest V3 configuration
 icons/icon.svg       → Extension icon
-release.sh           → Release script (version bump, tag, publish)
-release-publish.sh   → Standalone GitHub release publisher
+release.sh           → Legacy interactive release (commit, tag, push, publish)
+release-publish.sh   → Legacy tag publisher and maintained build-only path
 ```
 
 ### Data Flow
@@ -32,7 +32,7 @@ All state is module-level variables in `triage.js`: `allTabs`, `enrichedTabs`, `
 
 ## Tech Stack
 
-- **Vanilla JavaScript** — no frameworks, no dependencies, no build step
+- **Vanilla JavaScript** — no frameworks or runtime dependencies; no bundling or transpiling
 - **Firefox and Chrome WebExtension APIs** (Manifest V3) — the shared `api` alias resolves to `browser.*` or `chrome.*`
 - **Plain CSS** with CSS custom properties
 - **No bundler, no transpiler** — source files are the distribution
@@ -40,31 +40,34 @@ All state is module-level variables in `triage.js`: `allTabs`, `enrichedTabs`, `
 
 ## Build & Packaging
 
-Source files are the distribution files directly. Package with `npm run zip` which creates Firefox and Chrome archives containing only extension source files. The `.gitignore` excludes `*.xpi`, `*.zip`, `web-ext-artifacts/`, `node_modules/`, generated `manifest.json`, and the local `TODO.md` backlog.
+Source files are the distribution files directly. `npm run zip` creates `tab-triage-dashboard-firefox.zip` and `tab-triage-dashboard-chrome.zip` using the distribution allowlist. Each archive contains its browser-specific source manifest as `manifest.json`; do not edit a generated manifest as a release input. The `.gitignore` excludes `*.xpi`, `*.zip`, `web-ext-artifacts/`, `node_modules/`, generated `manifest.json`, and the local `TODO.md` backlog.
 
 ## Linting
 
-Run `npm run lint` to validate the extension with Mozilla's [addons-linter](https://github.com/mozilla/addons-linter). This zips only extension source files and lints the zip (to avoid scanning `.git/` and `node_modules/`). Warnings are treated as errors (`--warnings-as-errors`). CI runs this on every push and PR via GitHub Actions (`.github/workflows/lint.yml`).
+Run `npm run lint` to validate the extension with Mozilla's [addons-linter](https://github.com/mozilla/addons-linter). This zips only extension source files and lints the zip (to avoid scanning `.git/` and `node_modules/`). Warnings are treated as errors (`--warnings-as-errors`). CI runs this on every push and PR to `main` via GitHub Actions (`.github/workflows/lint.yml`).
 
 ## Releasing
 
-- **`npm run release`** — full release flow:
-  1. Parses conventional commits since last tag to infer semver bump (`feat:` → minor, `fix:` → patch, `BREAKING CHANGE` → major)
-  2. Updates version in `manifest.json` and `package.json`
-  3. Runs lint, builds zip, commits, tags, pushes
-  4. Creates a GitHub release with the zip via `gh` CLI
-  5. Bumps to next dev version and commits
+Follow [RELEASING.md](RELEASING.md) for the normal merge-driven release path. Commit the implementation on its topic branch, refresh and integrate current `origin/main`, then preview with `npm run release:prepare -- --base origin/main`. Add `--write` to synchronize `package.json`, `package-lock.json` and both browser manifests, and commit the reviewed metadata on the same branch.
 
-- **`npm run release:publish`** — retry/standalone publish: builds zip if needed and creates or updates the GitHub release for the latest existing tag. Use when the full release failed partway through or a tag was created manually.
+Conventional Commit messages determine the highest unreleased change: breaking changes select major, `feat:` minor and `fix:` patch. Ordinary docs/ci/test/chore-only ranges do not release. Keep the PR title's classification consistent, including for squash merges. Never invent a releasing commit type merely to publish documentation.
+
+After a verified merge, the main workflow creates an annotated tag at the exact release commit, builds and verifies both archives and provenance, publishes the GitHub Release, and explicitly dispatches isolated store publishers. There is no separate release-preparation PR, direct-main version bump or post-release development-version commit.
+
+`npm run release` and `npm run release:publish` are legacy mutation/recovery commands, not the normal automatic path. They can commit/push/tag or replace assets. Do not use them to retry automatic publication or overwrite an existing tag/release. See [STORE_PUBLISHING.md](STORE_PUBLISHING.md) for store-specific verification; dispatch or submission is not proof of public availability.
 
 ## npm Scripts
 
 | Script | Purpose |
 |---|---|
+| `npm test` | Run tab-management, UI, packaging and release/store regression tests |
 | `npm run lint` | Validate extension with addons-linter |
-| `npm run zip` | Build `tab-triage-dashboard.zip` from source files |
-| `npm run release` | Full release: bump, lint, zip, tag, push, GitHub release, prep next dev |
-| `npm run release:publish` | Create/update GitHub release for the latest tag |
+| `npm run zip` | Build separate Firefox and Chrome source archives |
+| `npm run zip:firefox`, `npm run zip:chrome` | Build one browser archive |
+| `npm run release:prepare -- --base origin/main` | Preview original-PR version preparation; add `--write` for source metadata |
+| `npm run test:stores` | Run credential-free store publication regressions |
+| `npm run release` | Legacy interactive release with commit/tag/push side effects |
+| `npm run release:publish -- "$TAG"` | Legacy selected-tag publication that can replace release assets |
 
 ## Key Conventions
 
@@ -108,13 +111,15 @@ Run `npm run lint` to validate the extension with Mozilla's [addons-linter](http
 | `triage.css` | Full styling with Catppuccin Macchiato palette |
 | `triage.html` | Page structure: toolbar, filters, table, stats bar, panels |
 | `manifest.firefox.json`, `manifest.chrome.json` | Browser-specific extension metadata and permissions |
-| `release.sh` | Full release automation script |
-| `release-publish.sh` | Standalone GitHub release publisher |
+| `RELEASING.md` | Merge-driven release preparation, publication and recovery |
+| `STORE_PUBLISHING.md` | Isolated browser-store verification and publication |
+| `scripts/release_plan.py`, `scripts/release_publish.py` | Automatic release planning and exact-source publication |
+| `release.sh`, `release-publish.sh` | Legacy release commands and maintained tag-based build-only path |
 | `AMO_LISTING.md` | Reference for Firefox Add-ons submission form |
 
 ## Important Patterns
 
 - **Enrichment**: Raw tab data gets computed fields added (`domain`, `domainCount`, `ageMs`, `ageBucket`, `isDuplicate`, `statusList`, etc.)
-- **Multi-column sort**: `currentSort` is an array of `{key, dir}` with three-state cycling (desc → asc → off)
+- **Multi-column sort**: `currentSort` is an array of `{key, dir}` with three-state cycling (default direction → reverse → off; Title and Domain start ascending, other columns descending)
 - **Filter logic**: Age filters use OR, status filters use AND, domain filter uses inclusion set
 - **Ignore system**: Set-based (`ignoredUrls`, `ignoredDomains`), persisted, with URL normalization for dedup
