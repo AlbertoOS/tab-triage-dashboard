@@ -2,12 +2,31 @@
 // Cross-browser compatibility: Firefox exposes `browser`, Chrome exposes `chrome`
 const api = globalThis.browser || chrome;
 
-api.action.onClicked.addListener(async () => {
-  try {
-    await api.tabs.create({ url: api.runtime.getURL("triage.html") });
-  } catch (error) {
+const openingDashboards = new Map();
+
+api.action.onClicked.addListener((clickedTab) => {
+  const incognito = !!clickedTab?.incognito;
+  if (openingDashboards.has(incognito)) return openingDashboards.get(incognito);
+  const opening = (async () => {
+    const url = api.runtime.getURL("triage.html");
+    const dashboards = (await api.tabs.query({})).filter((tab) =>
+      !!tab.incognito === incognito &&
+      (tab.pendingUrl || tab.url || "").split(/[?#]/)[0] === url);
+    const dashboard = dashboards.find((tab) => tab.windowId === clickedTab?.windowId) || dashboards[0];
+    if (dashboard) {
+      await api.tabs.update(dashboard.id, { active: true });
+      await api.windows.update(dashboard.windowId, { focused: true });
+    } else {
+      const properties = { url, active: true };
+      if (Number.isSafeInteger(clickedTab?.windowId)) properties.windowId = clickedTab.windowId;
+      await api.tabs.create(properties);
+    }
+  })().catch((error) => {
     console.error("Could not open Tab Triage:", error?.message || "Browser operation failed.");
-  }
+  }).finally(() => openingDashboards.delete(incognito));
+  // Share in-flight opens, but keep regular and private windows separate.
+  openingDashboards.set(incognito, opening);
+  return opening;
 });
 
 // Keep the message channel open; every supported command returns a structured result.
