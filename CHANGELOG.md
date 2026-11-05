@@ -4,6 +4,14 @@ Released changes are listed here; proposed work lives in the [roadmap](ROADMAP.m
 GitHub release versions and browser-store versions can differ while store review is pending.
 See [GitHub Releases](https://github.com/AlbertoOS/tab-triage-dashboard/releases) for release notes and downloads, including earlier versions not summarized here.
 
+## 1.5.0
+
+### Dashboard navigation
+
+- Reuse and focus an existing dashboard from the toolbar, preferring the clicked window and keeping regular and private browsing contexts separate.
+- Recognize loaded and loading dashboards, and coalesce overlapping launches rather than creating duplicate dashboard tabs.
+- Report browser-operation failures without opening an extra dashboard as a fallback; later toolbar clicks can retry.
+
 ## [1.4.4](https://github.com/AlbertoOS/tab-triage-dashboard/releases/tag/v1.4.4) — 2026-11-04
 
 ### Tab management
