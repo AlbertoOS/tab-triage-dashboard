@@ -11,6 +11,7 @@ function background(overrides = {}, namespace = "chrome") {
   const api = {
     action: { onClicked: { addListener(fn) { click = fn; } } },
     runtime: {
+      sendMessage: async () => ({ ok: true }),
       getURL: () => "chrome-extension://fixture/triage.html",
       getManifest: () => namespace === "browser" ? { browser_specific_settings: { gecko: {} } } : {},
       onMessage: { addListener(fn) { listener = fn; } },

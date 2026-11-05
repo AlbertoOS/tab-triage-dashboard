@@ -75,7 +75,8 @@ function createDashboard(saved = {}) {
     window: Object.assign(createElement(), { innerWidth: 800, innerHeight: 600 }),
     document,
     browser: {
-      runtime: { getURL: () => "moz-extension://test/triage.html" },
+      tabs: { getCurrent: async () => ({ id: 100 }) },
+      runtime: { getURL: () => "moz-extension://test/triage.html", onMessage: { addListener() {} } },
       storage: {
         local: {
           get: async () => saved,

@@ -32,8 +32,10 @@ async function refreshTabs() {
   document.getElementById("bulkError").textContent = "";
   try {
     await loadTabs();
+    return { ok: true };
   } catch (error) {
     reportError(`Could not refresh tabs: ${error.message}`);
+    return { ok: false, error: error.message };
   }
 }
 
@@ -1101,4 +1103,21 @@ function showUndoToast(message) {
 }
 
 // --- Init ---
-refreshTabs();
+// Resolve this page's identity before initial load so broadcasts can be ignored
+// synchronously by every non-target page without claiming a response channel.
+api.tabs.getCurrent().then((tab) => {
+  if (Number.isSafeInteger(tab?.id) && tab.id >= 0) {
+    api.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      if (message?.type !== "refreshDashboard" || message.tabId !== tab.id) return false;
+      refreshTabs().then(sendResponse).catch((error) => {
+        reportError(`Could not acknowledge dashboard refresh: ${error.message}`);
+      });
+      return true;
+    });
+  }
+  return refreshTabs();
+}).catch(async (error) => {
+  // Identity failure must not block the ordinary inventory/manual refresh path.
+  await refreshTabs();
+  reportError(`Could not initialize dashboard refresh: ${error.message}`);
+});

@@ -20,6 +20,15 @@ api.action.onClicked.addListener((clickedTab) => {
     if (dashboard) {
       await api.tabs.update(dashboard.id, { active: true });
       await api.windows.update(dashboard.windowId, { focused: true });
+      // Extension pages receive runtime broadcasts, except the sending context.
+      // The selected dashboard alone handles this notification, even if active.
+      try {
+        const response = await api.runtime.sendMessage({ type: "refreshDashboard", tabId: dashboard.id });
+        if (response?.ok !== true) throw new Error(response?.error || "Dashboard did not acknowledge refresh.");
+      } catch (error) {
+        // Pending navigation may not have a receiver yet; initial load reads tabs.
+        console.error("Could not refresh Tab Triage:", error?.message || "Browser operation failed.");
+      }
     } else {
       const properties = { url, active: true };
       if (Number.isSafeInteger(clickedTab?.windowId) && incognito === !!clickedTab?.incognito) {
