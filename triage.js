@@ -10,6 +10,8 @@ let currentSort = []; // Array of { key, dir } for multi-column sort
 let collapsedGroups = new Set();
 let ignoredUrls = new Set();
 let ignoredDomains = new Set();
+let ignoreEditRevision = 0;
+let pendingIgnoreSaves = 0;
 let showIgnored = false;
 let fuzzySearch = false;
 let selectedTabIds = new Set();
@@ -50,6 +52,8 @@ let latestLoad;
 
 function loadTabs(shouldReportError = () => true) {
   const request = {};
+  const ignoreRevision = ignoreEditRevision;
+  const ignoreSavePending = pendingIgnoreSaves > 0;
   latestLoad = request;
   request.promise = (async () => {
     try {
@@ -58,8 +62,12 @@ function loadTabs(shouldReportError = () => true) {
       if (!Array.isArray(response.tabs)) throw new Error("Invalid tab response.");
       if (latestLoad !== request) return latestLoad.promise;
       allTabs = response.tabs;
-      ignoredUrls = ignoreLists.ignoredUrls;
-      ignoredDomains = ignoreLists.ignoredDomains;
+      // A local edit owns preferences, not inventory. A save already pending at
+      // read start can also make storage stale without changing this revision.
+      if (ignoreEditRevision === ignoreRevision && !ignoreSavePending) {
+        ignoredUrls = ignoreLists.ignoredUrls;
+        ignoredDomains = ignoreLists.ignoredDomains;
+      }
       enrichTabs();
       populateDomainFilter();
       render();
@@ -758,15 +766,21 @@ async function loadIgnoreLists() {
 }
 
 async function saveIgnoreLists() {
-  await api.storage.local.set({
-    ignoredUrls: [...ignoredUrls],
-    ignoredDomains: [...ignoredDomains],
-  });
+  pendingIgnoreSaves++;
+  try {
+    await api.storage.local.set({
+      ignoredUrls: [...ignoredUrls],
+      ignoredDomains: [...ignoredDomains],
+    });
+  } finally {
+    pendingIgnoreSaves--;
+  }
 }
 
 async function ignoreUrl(url) {
   const norm = normalizeIgnoredUrl(url);
   if (!norm) return;
+  ignoreEditRevision++;
   ignoredUrls.add(norm);
   await saveIgnoreLists();
   render();
@@ -775,6 +789,7 @@ async function ignoreUrl(url) {
 
 async function ignoreDomain(domain) {
   if (!domain) return;
+  ignoreEditRevision++;
   ignoredDomains.add(domain);
   await saveIgnoreLists();
   render();
@@ -782,6 +797,7 @@ async function ignoreDomain(domain) {
 }
 
 async function unignoreUrl(url) {
+  ignoreEditRevision++;
   ignoredUrls.delete(url);
   await saveIgnoreLists();
   render();
@@ -789,6 +805,7 @@ async function unignoreUrl(url) {
 }
 
 async function unignoreDomain(domain) {
+  ignoreEditRevision++;
   ignoredDomains.delete(domain);
   await saveIgnoreLists();
   render();
@@ -796,6 +813,7 @@ async function unignoreDomain(domain) {
 }
 
 async function resetAllIgnored() {
+  ignoreEditRevision++;
   ignoredUrls.clear();
   ignoredDomains.clear();
   await saveIgnoreLists();
