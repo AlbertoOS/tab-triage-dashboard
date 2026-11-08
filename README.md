@@ -26,6 +26,8 @@ Install from [Firefox Add-ons (AMO)](https://addons.mozilla.org/en-US/firefox/ad
 
 Store versions can lag GitHub releases while review is pending.
 
+The Firefox package requires desktop Firefox 140 or newer; its Android manifest minimum is 142. These version requirements retain Mozilla's [built-in no-data collection declaration](https://extensionworkshop.com/documentation/develop/firefox-builtin-data-consent/). Android behavior has not been validated.
+
 ### Chrome development install
 
 To test a local build instead of the store version:
