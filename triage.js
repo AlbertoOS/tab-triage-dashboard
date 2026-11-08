@@ -874,13 +874,19 @@ function updateIgnoredPanel() {
 const helpDialog = document.getElementById("helpDialog");
 document.getElementById("helpAbout").addEventListener("click", () => {
   let version = "unknown";
+  let browserContext = "unknown";
   try {
-    const installedVersion = api.runtime.getManifest?.()?.version;
+    const manifest = api.runtime.getManifest?.();
+    const installedVersion = manifest?.version;
     if (typeof installedVersion === "string" && installedVersion.trim()) version = installedVersion;
+    // Identify the package, not the API alias: Chromium may expose both aliases.
+    if (manifest?.browser_specific_settings?.gecko) browserContext = "Firefox";
+    else if (typeof manifest?.background?.service_worker === "string" && manifest.background.service_worker.trim()) browserContext = "Chrome";
   } catch {
     // Help remains available if runtime metadata cannot be read.
   }
   document.getElementById("helpVersion").textContent = `Installed version: ${version}`;
+  document.getElementById("helpBrowser").textContent = `Browser context: ${browserContext}`;
   helpDialog.showModal();
   document.getElementById("helpClose").focus();
 });

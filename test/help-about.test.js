@@ -30,6 +30,47 @@ it("opens header Help/About with the installed runtime version, not package meta
   assert.deepEqual(Array.from(app.messages, (message) => message.type), ["getTabs"], "Help must not fetch releases or change tabs");
 });
 
+it("shows Firefox package context even through the chrome API alias", async () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "../manifest.firefox.json"), "utf8"));
+  const app = createApp(() => manifest);
+  await app.settle();
+  app.get("helpAbout").listeners.click();
+  assert.equal(app.get("helpBrowser").textContent, "Browser context: Firefox");
+  assert.match(html, /<p\b[^>]*id="helpBrowser"/);
+});
+
+it("shows Chrome package context when both browser API aliases are present", async () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "../manifest.chrome.json"), "utf8"));
+  const app = createApp(() => manifest);
+  await app.settle();
+  app.run("globalThis.browser = chrome");
+  app.get("helpAbout").listeners.click();
+  assert.equal(app.get("helpBrowser").textContent, "Browser context: Chrome");
+});
+
+it("rereads package context on reopen without guessing from missing metadata", async () => {
+  let manifest = { version: "8.7.6", browser_specific_settings: { gecko: {} } };
+  const app = createApp(() => manifest);
+  await app.settle();
+  const label = app.get("helpBrowser");
+  Object.defineProperty(label, "innerHTML", { set() { assert.fail("context must remain literal text"); } });
+  for (const [next, expected] of [
+    [manifest, "Firefox"],
+    [{ version: "8.7.6", background: { service_worker: "background.js" } }, "Chrome"],
+    [{ version: "8.7.6" }, "unknown"],
+    [{ version: "8.7.6", background: { service_worker: 15 } }, "unknown"],
+    [{ version: "8.7.6", background: { service_worker: " " } }, "unknown"],
+  ]) {
+    manifest = next;
+    app.get("helpAbout").listeners.click();
+    assert.equal(label.textContent, `Browser context: ${expected}`);
+    assert.equal(label.children.length, 0);
+    assert.equal(app.get("helpVersion").textContent, "Installed version: 8.7.6");
+    app.get("helpClose").listeners.click();
+  }
+  assert.deepEqual(Array.from(app.messages, (message) => message.type), ["getTabs"]);
+});
+
 it("closes Help with its button and returns focus to the header opener", async () => {
   const app = createApp();
   await app.settle();
@@ -225,6 +266,7 @@ for (const [label, getManifest] of [
     assert.doesNotThrow(() => app.get("helpAbout").listeners.click());
     assert.equal(app.get("helpDialog").open, true);
     assert.equal(app.get("helpVersion").textContent, "Installed version: unknown");
+    assert.equal(app.get("helpBrowser").textContent, "Browser context: unknown");
     assert.equal(app.get("bulkError").textContent, "");
   });
 }
