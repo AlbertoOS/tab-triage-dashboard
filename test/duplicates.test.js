@@ -56,6 +56,54 @@ function tab(id, url = "https://copies.example/page", extra = {}) {
   return { id, url, windowId: 1, index: id, pinned: false, active: false, ...extra };
 }
 
+function activateSuccessor(id, tabs) {
+  const closing = tabs.find((item) => item.id === id);
+  if (!closing.active) return;
+  const siblings = tabs.filter((item) => item.id !== id && item.windowId === closing.windowId);
+  const next = siblings.find((item) => item.index > closing.index) || siblings.at(-1);
+  for (const item of siblings) item.active = item.id === next?.id;
+}
+
+for (const namespace of ["chrome", "browser"]) {
+  for (const mode of ["keep", "closeAll"]) {
+    const label = mode === "keep" ? "Keep this" : "Close all copies";
+    const clickedId = mode === "keep" ? 3 : 1;
+    const selector = mode === "keep" ? ".btn-dedup" : ".btn-close-copies";
+    it(`finishes ${label} when closing an active copy activates its successor through ${namespace}`, async () => {
+      const bg = broker([tab(1, undefined, { active: true }), tab(2), tab(3)], namespace, {
+        remove: activateSuccessor,
+      });
+      const app = dashboard(bg.send);
+      await app.settle();
+      app.run("globalThis.confirm = () => true;");
+      const row = app.get("tab-body").children.find((item) => item.dataset.tabId === String(clickedId));
+      await row.querySelector(selector).listeners.click({ stopPropagation() {} });
+      assert.deepEqual(bg.tabs.map((item) => item.id), mode === "keep" ? [3] : []);
+      assert.deepEqual(bg.removed, mode === "keep" ? [2, 1] : [2, 3, 1]);
+      assert.match(app.get("undo-toast-msg").textContent, mode === "keep" ? /Closed 2 tabs/ : /Closed 3 tabs/);
+    });
+
+    it(`preserves an externally activated candidate during ${label} through ${namespace}`, async () => {
+      const bg = broker([tab(1, undefined, { active: true }), tab(2), tab(3)], namespace, {
+        query: (tabs, count) => {
+          if (count !== 2) return;
+          for (const item of tabs) item.active = item.id === 2;
+        },
+        remove: activateSuccessor,
+      });
+      const app = dashboard(bg.send);
+      await app.settle();
+      app.run("globalThis.confirm = () => true;");
+      const row = app.get("tab-body").children.find((item) => item.dataset.tabId === String(clickedId));
+      await row.querySelector(selector).listeners.click({ stopPropagation() {} });
+      assert.deepEqual(bg.tabs.map((item) => item.id), mode === "keep" ? [2, 3] : [2]);
+      assert.equal(bg.removed.includes(2), false);
+      assert.deepEqual([...bg.removed].sort((a, b) => a - b), mode === "keep" ? [1] : [1, 3]);
+      assert.match(app.get("undo-toast-msg").textContent, /1 skipped/);
+    });
+  }
+}
+
 for (const namespace of ["browser", "chrome"]) {
   it(`previews all windows and retains every protected copy through ${namespace}`, async () => {
     const bg = broker([tab(9), tab(2), tab(3, undefined, { pinned: true }),

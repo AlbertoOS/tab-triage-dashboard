@@ -146,8 +146,10 @@ function buildDuplicatePlan(tabs, mode, dashboardUrl, clickedId) {
     const keepers = mode === "global" ? (protectedCopies.length ? protectedCopies : [ordered[0]])
       : mode === "keep" ? [clicked] : [];
     const keeperIds = keepers.map((tab) => tab.id);
+    // Close inactive copies first so removing an active copy cannot promote
+    // another planned inactive candidate that the live safety guard would skip.
     const candidates = ordered.filter((tab) => !keeperIds.includes(tab.id) &&
-      !isDashboardTab(tab, dashboardUrl)).map((tab) => ({
+      !isDashboardTab(tab, dashboardUrl)).sort((a, b) => Number(!!a.active) - Number(!!b.active)).map((tab) => ({
       id: tab.id, url: tab.url, windowId: tab.windowId,
       pinned: !!tab.pinned, active: !!tab.active,
     }));
