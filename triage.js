@@ -1068,6 +1068,8 @@ document.getElementById("refresh").addEventListener("click", refreshTabs);
 // Escape dismisses Help before the ordinary search shortcut.
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
+    // Holding the dismissal key must not become a second search-clear action.
+    if (e.repeat) return;
     if (helpDialog.open) {
       e.preventDefault();
       helpDialog.close();

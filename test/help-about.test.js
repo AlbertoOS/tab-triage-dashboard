@@ -68,6 +68,22 @@ it("gives Help Escape priority without changing search, filters, selection or re
   assert.equal(app.get("search").value, "", "ordinary Escape still clears search after Help closes");
 });
 
+it("keeps search intact through a held Escape dismissal until a separate Escape press", async () => {
+  const app = createApp();
+  await app.settle();
+  app.get("search").value = "keep this search";
+  app.get("helpAbout").listeners.click();
+  app.documentListeners.keydown({ key: "Escape", repeat: false, preventDefault() {} });
+  assert.equal(app.get("helpDialog").open, false);
+  for (let i = 0; i < 3; i++) {
+    app.documentListeners.keydown({ key: "Escape", repeat: true, preventDefault() {} });
+    assert.equal(app.get("search").value, "keep this search");
+  }
+  assert.equal(app.run("document.activeElement"), app.get("helpAbout"));
+  app.documentListeners.keydown({ key: "Escape", repeat: false, preventDefault() {} });
+  assert.equal(app.get("search").value, "", "a separate press still clears search");
+});
+
 it("documents the current tab operations without advertising planned safeguards", () => {
   const help = html.match(/<dialog\b[^>]*id="helpDialog"[^>]*>([\s\S]*?)<\/dialog>/)?.[1] || "";
   const text = help.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ");
