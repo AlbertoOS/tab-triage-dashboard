@@ -139,6 +139,12 @@ it("bounds the Help surface for narrow/zoomed viewports and keeps keyboard focus
   assert.match(css, /header\s*\{[^}]*flex-wrap:\s*wrap/);
 });
 
+it("wraps the sticky Help heading so narrow zoom does not squeeze the title beside Close", () => {
+  const heading = fs.readFileSync(path.join(__dirname, "../triage.css"), "utf8")
+    .match(/\.help-heading\s*\{([^}]+)\}/)[1];
+  assert.match(heading, /flex-wrap:\s*wrap/);
+});
+
 it("treats runtime version markup as literal text and rereads installed metadata on reopen", async () => {
   let version = '<img src="invalid" onerror="alert(1)">';
   const app = createApp(() => ({ version }));
