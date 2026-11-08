@@ -28,6 +28,7 @@ body {
 
 header {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 16px;
   margin-bottom: 16px;
@@ -867,6 +868,101 @@ button:disabled { opacity: 0.45; cursor: default; }
 .btn-undo:hover {
   background: var(--blue);
   filter: brightness(1.15);
+}
+
+/* Help / About: native top-layer modality, with a scrollable reading surface. */
+#helpAbout {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+#helpDialog {
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  margin: auto;
+  padding: 0;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  background: var(--base);
+  color: var(--text);
+  border: 1px solid var(--surface2);
+  border-radius: 8px;
+  line-height: 1.6;
+}
+
+#helpDialog::backdrop {
+  background: rgba(0, 0, 0, 0.65);
+}
+
+.help-heading {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px;
+  background: var(--base);
+  border-bottom: 1px solid var(--surface2);
+  z-index: 1;
+}
+
+.help-heading h2 {
+  min-width: 0;
+  font-size: 16px;
+  color: var(--blue);
+}
+
+#helpClose {
+  flex-shrink: 0;
+}
+
+#helpVersion, #helpDialog section {
+  margin: 16px;
+}
+
+#helpDialog h3 {
+  color: var(--blue);
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+
+#helpDialog ul {
+  padding-left: 20px;
+}
+
+#helpDialog li + li, #helpDialog p + p {
+  margin-top: 8px;
+}
+
+.help-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 12px 0;
+}
+
+.help-links a {
+  color: var(--blue);
+  text-underline-offset: 3px;
+}
+
+#helpAbout:focus-visible,
+#helpDialog :focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+@media (max-width: 480px) {
+  header {
+    gap: 8px;
+  }
+
+  #stats {
+    order: 1;
+    flex-basis: 100%;
+  }
 }
 
 /* Responsive */

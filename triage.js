@@ -870,6 +870,29 @@ function updateIgnoredPanel() {
 
 // --- Event listeners ---
 
+// Native dialog supplies modal focus containment in supported Firefox/Chrome.
+const helpDialog = document.getElementById("helpDialog");
+document.getElementById("helpAbout").addEventListener("click", () => {
+  let version = "unknown";
+  let browserContext = "unknown";
+  try {
+    const manifest = api.runtime.getManifest?.();
+    const installedVersion = manifest?.version;
+    if (typeof installedVersion === "string" && installedVersion.trim()) version = installedVersion;
+    // Identify the package, not the API alias: Chromium may expose both aliases.
+    if (manifest?.browser_specific_settings?.gecko) browserContext = "Firefox";
+    else if (typeof manifest?.background?.service_worker === "string" && manifest.background.service_worker.trim()) browserContext = "Chrome";
+  } catch {
+    // Help remains available if runtime metadata cannot be read.
+  }
+  document.getElementById("helpVersion").textContent = `Installed version: ${version}`;
+  document.getElementById("helpBrowser").textContent = `Browser context: ${browserContext}`;
+  helpDialog.showModal();
+  document.getElementById("helpClose").focus();
+});
+document.getElementById("helpClose").addEventListener("click", () => helpDialog.close());
+helpDialog.addEventListener("close", () => document.getElementById("helpAbout").focus({ preventScroll: true }));
+
 document.getElementById("selectFiltered").addEventListener("click", () => selectFilteredTabs(true));
 document.getElementById("clearSelection").addEventListener("click", () => selectFilteredTabs(false));
 document.getElementById("selectAllTabs").addEventListener("change", (e) => selectFilteredTabs(e.target.checked));
@@ -1048,9 +1071,16 @@ api.storage.local.get("faviconSize").then((result) => {
 // Refresh
 document.getElementById("refresh").addEventListener("click", refreshTabs);
 
-// Keyboard shortcut: Escape clears search
+// Escape dismisses Help before the ordinary search shortcut.
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
+    // Holding the dismissal key must not become a second search-clear action.
+    if (e.repeat) return;
+    if (helpDialog.open) {
+      e.preventDefault();
+      helpDialog.close();
+      return;
+    }
     const search = document.getElementById("search");
     if (search.value) {
       search.value = "";
