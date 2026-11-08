@@ -7,6 +7,7 @@ const path = require("node:path");
 // Only browser/DOM boundaries are mocked; execute the complete dashboard source.
 function dashboard(sendMessage, storage = {}, browser = {}) {
   const elements = new Map();
+  const documentListeners = {};
   const timers = new Map();
   let now = 0;
   let timerId = 0;
@@ -122,18 +123,20 @@ function dashboard(sendMessage, storage = {}, browser = {}) {
         }
         return [];
       },
-      querySelector: get, addEventListener() {}, documentElement: element() },
+      querySelector: get,
+      addEventListener(type, listener) { documentListeners[type] = listener; },
+      documentElement: element() },
   });
   for (const file of ["utils.js", "triage.js"]) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, "..", file), "utf8"), context);
   }
-  return { get, messages, messageListeners, advanceTime, resize: () => resizeObservers.forEach((callback) => callback()),
+  return { get, messages, messageListeners, documentListeners, advanceTime, resize: () => resizeObservers.forEach((callback) => callback()),
     run: (code) => vm.runInContext(code, context),
     settle: () => new Promise(setImmediate) };
 }
 
 for (const [selector, type] of [[".btn-close", "closeTab"], [".btn-goto", "goToTab"],
-  [".btn-discard", "discardTab"], [".btn-dedup", "closeTabs"]]) {
+  [".btn-discard", "discardTab"], [".btn-dedup", "closeDuplicates"]]) {
   it(`contains ${type} errors without false recovery and refreshes partial browser state`, async () => {
     let queries = 0;
     const app = dashboard((message) => {
@@ -155,7 +158,7 @@ for (const [selector, type] of [[".btn-close", "closeTab"], [".btn-goto", "goToT
 }
 
 for (const [selector, type] of [[".btn-goto", "goToTab"], [".btn-discard", "discardTab"],
-  [".btn-close", "closeTab"], [".btn-dedup", "closeTabs"]]) {
+  [".btn-close", "closeTab"], [".btn-dedup", "closeDuplicates"]]) {
   const outcomes = type === "goToTab" || type === "discardTab" ? ["success", "denied", "rejected"] : ["denied", "rejected"];
   for (const outcome of outcomes) {
     it(`preserves existing recovery through ${type} ${outcome}`, async () => {

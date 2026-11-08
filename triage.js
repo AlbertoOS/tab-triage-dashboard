@@ -16,6 +16,7 @@ let showIgnored = false;
 let fuzzySearch = false;
 let selectedTabIds = new Set();
 let closingSelected = false;
+let closingTabAction = false;
 
 // --- Data ---
 
@@ -36,6 +37,9 @@ async function refreshTabs() {
 }
 
 async function runTabAction(message, successMessage) {
+  const isClose = message.type === "closeTab" || message.type === "closeTabs";
+  if (isClose && (closingTabAction || closingDuplicates || closingSelected)) return;
+  if (isClose) closingTabAction = true;
   document.getElementById("bulkError").textContent = "";
   try {
     await sendCommand(message);
@@ -45,6 +49,7 @@ async function runTabAction(message, successMessage) {
   } finally {
     // Operations can partly succeed before the browser rejects them.
     await loadTabs();
+    if (isClose) closingTabAction = false;
   }
 }
 
@@ -93,11 +98,20 @@ function enrichTabs() {
   }
 
   // Find duplicates
-  const urlCounts = {};
+  const urlCounts = new Map();
+  const duplicateRisk = new Map();
   for (const tab of allTabs) {
-    if (!tab.url || tab.url.startsWith("about:")) continue;
     const key = normalizeUrl(tab.url);
-    urlCounts[key] = (urlCounts[key] || 0) + 1;
+    if (key !== null) {
+      urlCounts.set(key, (urlCounts.get(key) || 0) + 1);
+      const risk = duplicateRisk.get(key) || { count: 0, pinned: 0, active: 0 };
+      if (isSelectableTab(tab)) {
+        risk.count++;
+        if (tab.pinned) risk.pinned++;
+        if (tab.active) risk.active++;
+      }
+      duplicateRisk.set(key, risk);
+    }
   }
 
   enrichedTabs = allTabs.map((tab, i) => {
@@ -105,6 +119,8 @@ function enrichTabs() {
     const lastAccessed = tab.lastAccessed || 0;
     const ageMs = now - lastAccessed;
     const normUrl = normalizeUrl(tab.url || "");
+    const risk = duplicateRisk.get(normUrl) || { count: 0, pinned: 0, active: 0 };
+    const eligible = isSelectableTab(tab);
 
     return {
       ...tab,
@@ -115,11 +131,74 @@ function enrichTabs() {
       ageMs,
       ageText: formatAge(ageMs),
       ageBucket: getAgeBucket(ageMs),
-      isDuplicate: (urlCounts[normUrl] || 0) > 1,
-      duplicateCount: urlCounts[normUrl] || 1,
+      isDuplicate: (urlCounts.get(normUrl) || 0) > 1,
+      duplicateCount: urlCounts.get(normUrl) || 1,
+      duplicateCloseAllCount: risk.count,
+      duplicateCloseOtherCount: risk.count - (eligible ? 1 : 0),
+      duplicateOtherPinned: risk.pinned - (eligible && tab.pinned ? 1 : 0),
+      duplicateOtherActive: risk.active - (eligible && tab.active ? 1 : 0),
       statusList: getStatusList(tab),
     };
   });
+}
+
+// --- Scoped duplicate actions ---
+let closingDuplicates = false;
+
+function duplicateCandidates(plan) {
+  return plan.groups.flatMap((group) => group.candidates);
+}
+
+function duplicatePreviewText(plan) {
+  const candidates = duplicateCandidates(plan);
+  const pinned = candidates.filter((tab) => tab.pinned).length;
+  const active = candidates.filter((tab) => tab.active).length;
+  const scope = plan.mode === "global"
+    ? "all accessible windows, including filtered-out and ignored tabs"
+    : "loaded inventory across all windows, including filtered-out and ignored tabs";
+  const action = plan.mode === "closeAll" ? "Close all copies (including this tab)"
+    : plan.mode === "keep" ? "Keep this tab and close other copies" : "Deduplicate all accessible windows";
+  const policy = plan.mode === "global"
+    ? `${plan.groups.reduce((sum, group) => sum + group.keeperIds.length, 0)} copies retained. Dashboards (loaded or pending), pinned tabs and each window's active tab are protected. All protected copies remain, so duplicates may remain. Otherwise the first browser window/tab-order copy is kept.`
+    : "Other pinned and active copies ARE included. Dashboards (loaded or pending) are excluded.";
+  return `${action}?\n\nClose ${candidates.length} tabs in ${plan.groups.length} duplicate URL groups.\nScope: ${scope}.\nAt risk: ${pinned} pinned, ${active} active tabs (counts can overlap).\n${policy}\n\nOnly previewed candidates will be attempted; changed tabs are skipped. The browser cannot make the final check and close atomic. Recovery restores the browser's most recent tab/window, not this batch.`;
+}
+
+async function runDuplicateAction(mode, clickedId) {
+  if (closingDuplicates || closingSelected || closingTabAction) return;
+  closingDuplicates = true;
+  document.getElementById("dedupAll").setAttribute("aria-disabled", "true");
+  document.getElementById("bulkError").textContent = "";
+  let attempted = false;
+  try {
+    const plan = mode === "global" ? (await sendCommand({ type: "previewDuplicates" })).plan
+      : buildDuplicatePlan(enrichedTabs, mode, api.runtime.getURL("triage.html"), clickedId);
+    const count = duplicateCandidates(plan).length;
+    if (count === 0) {
+      document.getElementById("duplicateStatus").textContent = "No eligible duplicate copies to close.";
+      return;
+    }
+    // Native confirmation supplies modal focus trapping and Escape cancellation.
+    // The keyboard handler ignores Escape repeats after dismissal.
+    if (mode !== "keep" && !confirm(duplicatePreviewText(plan))) return;
+    attempted = true;
+    const result = await sendCommand({ type: "closeDuplicates", plan });
+    const outcomes = [result.closedCount, result.skippedCount, result.failedCount, result.unverifiedCount];
+    if (!outcomes.every((count) => Number.isSafeInteger(count) && count >= 0) ||
+        outcomes.reduce((sum, count) => sum + count, 0) !== count) {
+      throw new Error("Invalid duplicate closure response.");
+    }
+    const summary = `Closed ${result.closedCount} tabs; ${result.skippedCount} skipped, ${result.failedCount} failed, ${result.unverifiedCount} unverified.`;
+    document.getElementById("duplicateStatus").textContent = summary;
+    if (result.closedCount > 0) showUndoToast(summary);
+    if (result.failedCount || result.unverifiedCount) reportError("Some duplicate closures failed or could not be verified. Refresh before retrying.");
+  } catch (error) {
+    reportError(`Could not complete duplicate action: ${error.message}`);
+  } finally {
+    if (attempted) await loadTabs();
+    closingDuplicates = false;
+    document.getElementById("dedupAll").setAttribute("aria-disabled", "false");
+  }
 }
 
 // --- Filtering ---
@@ -320,7 +399,7 @@ function selectFilteredTabs(selected) {
 }
 
 async function closeSelectedTabs() {
-  if (closingSelected) return;
+  if (closingSelected || closingDuplicates || closingTabAction) return;
   syncSelection(getFilteredTabs());
   const tabIds = [...selectedTabIds];
   if (tabIds.length === 0) {
@@ -350,7 +429,7 @@ function render() {
   // starts: a pending (or older) action must never steal newer user focus.
   const focused = document.activeElement;
   const focusedRow = Array.from(tbody.children).find((row) => row.contains(focused));
-  const focusSelector = ["tab-select", "btn-goto", "btn-close", "btn-dedup", "btn-more"]
+  const focusSelector = ["tab-select", "btn-goto", "btn-close", "btn-dedup", "btn-close-copies", "btn-more"]
     .find((name) => (focused?.className || "").split(" ").includes(name));
   const filtered = getFilteredTabs();
   syncSelection(filtered);
@@ -538,9 +617,18 @@ function createTabRow(tab) {
     const dedupBtn = document.createElement("button");
     dedupBtn.className = "btn-dedup";
     dedupBtn.dataset.tabId = tab.id;
-    dedupBtn.title = "Close other duplicates, keep this one";
-    dedupBtn.textContent = "Dedup";
+    dedupBtn.title = `Keep this tab; close ${tab.duplicateCloseOtherCount} other copies in loaded inventory across all windows, including filtered-out and ignored tabs. Includes ${tab.duplicateOtherPinned} pinned and ${tab.duplicateOtherActive} active copies. Dashboards are excluded.`;
+    dedupBtn.textContent = `Keep this; close ${tab.duplicateCloseOtherCount}`;
     actionsDiv.appendChild(dedupBtn);
+    const closeCopiesBtn = document.createElement("button");
+    closeCopiesBtn.className = "btn-close-copies";
+    closeCopiesBtn.textContent = `Close all copies (${tab.duplicateCloseAllCount})`;
+    closeCopiesBtn.title = "Preview closing all loaded copies, including this tab, across all windows and filters";
+    closeCopiesBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      return runDuplicateAction("closeAll", tab.id);
+    });
+    actionsDiv.appendChild(closeCopiesBtn);
   }
   const moreDropdown = document.createElement("div");
   moreDropdown.className = "more-dropdown";
@@ -598,13 +686,7 @@ function createTabRow(tab) {
   if (dedupBtn) {
     dedupBtn.addEventListener("click", async (e) => {
       e.stopPropagation();
-      const normUrl = normalizeUrl(tab.url || "");
-      // Find all tabs with the same normalized URL, excluding the current one
-      const dupeIds = enrichedTabs
-        .filter((t) => t.id !== tab.id && normalizeUrl(t.url || "") === normUrl)
-        .map((t) => t.id);
-      if (dupeIds.length === 0) return;
-      await runTabAction({ type: "closeTabs", tabIds: dupeIds }, "Duplicate close request completed.");
+      await runDuplicateAction("keep", tab.id);
     });
   }
 
@@ -870,6 +952,8 @@ function updateIgnoredPanel() {
 
 // --- Event listeners ---
 
+document.getElementById("dedupAll").addEventListener("click", () => runDuplicateAction("global"));
+
 document.getElementById("selectFiltered").addEventListener("click", () => selectFilteredTabs(true));
 document.getElementById("clearSelection").addEventListener("click", () => selectFilteredTabs(false));
 document.getElementById("selectAllTabs").addEventListener("change", (e) => selectFilteredTabs(e.target.checked));
@@ -1051,6 +1135,7 @@ document.getElementById("refresh").addEventListener("click", refreshTabs);
 // Keyboard shortcut: Escape clears search
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
+    if (e.repeat) return;
     const search = document.getElementById("search");
     if (search.value) {
       search.value = "";

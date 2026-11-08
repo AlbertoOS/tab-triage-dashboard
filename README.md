@@ -12,7 +12,8 @@ A Firefox and Chrome extension for managing and triaging your tabs with sorting,
 - **Configurable favicon size** — slider from 16px to 48px, persisted across sessions
 - **Actions per tab:**
   - **Go** — switch to the tab
-  - **Dedup** — close all other tabs with the same URL, keep this one
+  - **Keep this; close N** — keep this copy and immediately close the other matching copies without confirmation in the loaded inventory across all windows, including filtered-out, ignored, pinned and active copies. Dashboard tabs are excluded.
+  - **Close all copies (N)** — preview and confirm closing every loaded matching copy, including the clicked tab and other pinned or active copies. Dashboard tabs are excluded. The preview shows pinned and active counts.
   - **Ignore** — hide tabs by URL or entire domain (persisted, manageable)
   - **Close** — close the tab
 - **Ignore management** — toggle to show ignored tabs only, panel to review/remove ignores, reset all
@@ -43,6 +44,8 @@ Click the 🧐 icon in the toolbar to open the triage dashboard. If one is alrea
 Firefox keeps regular and private dashboard selection separate. Chrome uses a shared regular dashboard from private windows in its default spanning mode, when the extension is allowed to run in incognito. This does not change which tabs the browser lets the extension access, and it does not create separate settings or tab inventories for private windows.
 
 Filter and sort the tab list, then use **Select all filtered tabs** (or the checkbox in the table header) and **Close selected** to close the result in one batch. You can also select individual rows and clear the selection. Tabs in collapsed clusters are included; dashboard tabs are excluded. Changing filters removes hidden tabs from the selection.
+
+**Dedup all windows…** takes a fresh preview of duplicates in every window the browser allows the extension to access, including filtered-out and ignored tabs. It protects loaded/pending dashboards, pinned tabs and each window's active tab, retaining every protected copy. If none are protected, it keeps the copy with the lowest window ID, then browser tab index. Protected copies can leave duplicates behind. Confirmation attempts only the previewed candidates: tabs whose URL changed or that are loading a nonmatching or unknown destination, tabs moved to another window, newly protected tabs and groups without a verified matching preview keeper are skipped. Counts reflect browser readback; failures and unavailable readback are reported separately. The browser cannot make the final check and removal atomic.
 
 Use **Export selected links** to save the selection, or **Export all links** to save all open tabs regardless of filters and ignore lists. Exports are plain text files with one URL per line in the current sort order, preserving duplicate URLs. Dashboard tabs and empty URLs are excluded. To export a filtered result, select all filtered tabs and export the selection.
 

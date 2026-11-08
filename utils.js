@@ -10,8 +10,12 @@ function getDomain(url) {
 }
 
 function normalizeUrl(url) {
+  if (typeof url !== "string" || !url.trim()) return null;
   try {
     const u = new URL(url);
+    // Only HTTP(S) uses the established trailing-path-slash equivalence.
+    // Opaque origins ("null") are not identities: retain the complete URL.
+    if (u.protocol !== "http:" && u.protocol !== "https:") return url;
     return u.origin + u.pathname.replace(/\/+$/, "") + u.search + u.hash;
   } catch {
     return url;
@@ -115,6 +119,46 @@ function matchesStatusFilter(tab, statusFilters) {
   }
   return true;
 }
+
+// A preview is an exact, finite candidate list, never a live dedup subscription.
+function isDashboardTab(tab, dashboardUrl) {
+  return [tab.url, tab.pendingUrl].some((url) =>
+    typeof url === "string" && url.split(/[?#]/)[0] === dashboardUrl);
+}
+
+function buildDuplicatePlan(tabs, mode, dashboardUrl, clickedId) {
+  const groups = new Map();
+  const clicked = tabs.find((tab) => tab.id === clickedId);
+  const clickedKey = normalizeUrl(clicked?.url);
+  for (const tab of tabs) {
+    const key = normalizeUrl(tab.url);
+    if (key === null || (mode !== "global" && key !== clickedKey)) continue;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(tab);
+  }
+  const plan = { mode, groups: [] };
+  for (const [key, copies] of groups) {
+    if (copies.length < 2) continue;
+    const ordered = [...copies].sort((a, b) =>
+      a.windowId - b.windowId || a.index - b.index || a.id - b.id);
+    const protectedCopies = ordered.filter((tab) => isDashboardTab(tab, dashboardUrl) ||
+      (mode === "global" && (tab.pinned || tab.active)));
+    const keepers = mode === "global" ? (protectedCopies.length ? protectedCopies : [ordered[0]])
+      : mode === "keep" ? [clicked] : [];
+    const keeperIds = keepers.map((tab) => tab.id);
+    const candidates = ordered.filter((tab) => !keeperIds.includes(tab.id) &&
+      !isDashboardTab(tab, dashboardUrl)).map((tab) => ({
+      id: tab.id, url: tab.url, windowId: tab.windowId,
+      pinned: !!tab.pinned, active: !!tab.active,
+    }));
+    plan.groups.push({ key, keeperIds, candidates });
+  }
+  return plan;
+}
+
+// Classic dashboard scripts, Chromium importScripts and Firefox module imports
+// share this same implementation without changing either packaged manifest.
+globalThis.duplicateTools = { normalizeUrl, isDashboardTab, buildDuplicatePlan };
 
 // Node.js module export (ignored in browser)
 if (typeof module !== "undefined" && module.exports) {
