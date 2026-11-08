@@ -7,6 +7,7 @@ const path = require("node:path");
 // Only browser/DOM boundaries are mocked; execute the complete dashboard source.
 function dashboard(sendMessage, storage = {}, browser = {}) {
   const elements = new Map();
+  const documentListeners = {};
   const timers = new Map();
   let now = 0;
   let timerId = 0;
@@ -40,6 +41,9 @@ function dashboard(sendMessage, storage = {}, browser = {}) {
       },
       get disabled() { return this.isDisabled || false; },
       focus() { if (!this.disabled) activeElement = this; },
+      open: false,
+      showModal() { this.open = true; },
+      close() { this.open = false; this.listeners.close?.(); },
       contains(child) { return child === this || this.children.some((item) => item.contains(child)); },
       cloneNode() { return Object.assign(element(), { disabled: this.disabled }); },
       replaceWith(next) {
@@ -68,6 +72,25 @@ function dashboard(sendMessage, storage = {}, browser = {}) {
   };
   get("groupBy").value = "none";
   const html = fs.readFileSync(path.join(__dirname, "../triage.html"), "utf8");
+  // Bind Help controls to the shipped HTML rather than inventing fixture nodes.
+  // This parses static markup only; native modality/Tab traversal need browser acceptance.
+  const helpMarkup = html.match(/<dialog\b[^>]*id="helpDialog"[\s\S]*?<\/dialog>/)?.[0] || "";
+  const helpStack = [];
+  for (const [token] of helpMarkup.matchAll(/<[^>]+>|[^<]+/g)) {
+    if (token.startsWith("</")) {
+      helpStack.pop();
+    } else if (token.startsWith("<")) {
+      const node = element(token.match(/^<([\w-]+)/)[1]);
+      for (const [, name, value] of token.matchAll(/([\w-]+)="([^"]*)"/g)) node.setAttribute(name, value);
+      node.tag = token.match(/^<([\w-]+)/)[1];
+      const id = node.getAttribute("id");
+      if (id) elements.set(id, node);
+      if (helpStack.length) helpStack.at(-1).appendChild(node);
+      helpStack.push(node);
+    } else if (helpStack.length) {
+      helpStack.at(-1).text = (helpStack.at(-1).text || "") + token;
+    }
+  }
   const headers = [];
   for (const [, attributes, label] of html.matchAll(/<th\b([^>]*)>([^<]*)/g)) {
     const sort = attributes.match(/data-sort="([^"]+)"/);
@@ -109,6 +132,7 @@ function dashboard(sendMessage, storage = {}, browser = {}) {
           messages.push(message);
           return sendMessage(message);
         },
+        ...browser.runtime,
       },
       storage: { local: { get: async () => ({}), set: async () => {}, ...storage } },
     },
@@ -122,12 +146,14 @@ function dashboard(sendMessage, storage = {}, browser = {}) {
         }
         return [];
       },
-      querySelector: get, addEventListener() {}, documentElement: element() },
+      querySelector: get,
+      addEventListener(type, listener) { documentListeners[type] = listener; },
+      documentElement: element() },
   });
   for (const file of ["utils.js", "triage.js"]) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, "..", file), "utf8"), context);
   }
-  return { get, messages, messageListeners, advanceTime, resize: () => resizeObservers.forEach((callback) => callback()),
+  return { get, messages, messageListeners, documentListeners, advanceTime, resize: () => resizeObservers.forEach((callback) => callback()),
     run: (code) => vm.runInContext(code, context),
     settle: () => new Promise(setImmediate) };
 }

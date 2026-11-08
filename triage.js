@@ -870,6 +870,23 @@ function updateIgnoredPanel() {
 
 // --- Event listeners ---
 
+// Native dialog supplies modal focus containment in supported Firefox/Chrome.
+const helpDialog = document.getElementById("helpDialog");
+document.getElementById("helpAbout").addEventListener("click", () => {
+  let version = "unknown";
+  try {
+    const installedVersion = api.runtime.getManifest?.()?.version;
+    if (typeof installedVersion === "string" && installedVersion.trim()) version = installedVersion;
+  } catch {
+    // Help remains available if runtime metadata cannot be read.
+  }
+  document.getElementById("helpVersion").textContent = `Installed version: ${version}`;
+  helpDialog.showModal();
+  document.getElementById("helpClose").focus();
+});
+document.getElementById("helpClose").addEventListener("click", () => helpDialog.close());
+helpDialog.addEventListener("close", () => document.getElementById("helpAbout").focus({ preventScroll: true }));
+
 document.getElementById("selectFiltered").addEventListener("click", () => selectFilteredTabs(true));
 document.getElementById("clearSelection").addEventListener("click", () => selectFilteredTabs(false));
 document.getElementById("selectAllTabs").addEventListener("change", (e) => selectFilteredTabs(e.target.checked));
@@ -1048,9 +1065,14 @@ api.storage.local.get("faviconSize").then((result) => {
 // Refresh
 document.getElementById("refresh").addEventListener("click", refreshTabs);
 
-// Keyboard shortcut: Escape clears search
+// Escape dismisses Help before the ordinary search shortcut.
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
+    if (helpDialog.open) {
+      e.preventDefault();
+      helpDialog.close();
+      return;
+    }
     const search = document.getElementById("search");
     if (search.value) {
       search.value = "";

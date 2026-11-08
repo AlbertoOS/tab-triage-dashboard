@@ -11,6 +11,7 @@
     <header>
       <h1>🧐 Tab Triage</h1>
       <div id="stats"></div>
+      <button id="helpAbout" type="button" aria-haspopup="dialog" aria-controls="helpDialog">Help / About</button>
     </header>
 
     <div id="controls">
@@ -130,6 +131,44 @@
       <button id="undo-toast-btn" class="btn-undo" title="The browser chooses the session; this is not an undo of this batch.">Restore most recently closed tab/window</button>
     </div>
   </div>
+
+  <dialog id="helpDialog" aria-labelledby="helpTitle">
+    <div class="help-heading">
+      <h2 id="helpTitle">Help / About Tab Triage</h2>
+      <button id="helpClose" type="button" autofocus>Close</button>
+    </div>
+    <p id="helpVersion">Installed version: unknown</p>
+    <section aria-labelledby="helpBasics">
+      <h3 id="helpBasics">Review your tabs</h3>
+      <ul>
+        <li><strong>Sort:</strong> click column headers to add priorities: default direction → reverse → off. Title and Domain start A–Z; Age starts oldest first (time since last access).</li>
+        <li><strong>Filter:</strong> age buckets match any selected bucket (OR); status requirements all apply (AND). Status buttons cycle off → include → exclude. Selected domains match any checked domain. No domains checked means all domains. Search and filter groups apply together.</li>
+        <li><strong>Search:</strong> matches titles, URLs and domains; Fuzzy matches all words in any order. Escape clears search when Help is closed.</li>
+        <li><strong>Ignore:</strong> hide a URL or domain via the row’s More menu. Show ignored only shows only ignored tabs, still subject to search and filters. Manage ignored lets you remove entries or reset the lists.</li>
+        <li><strong>Group by:</strong> display clusters organize the dashboard list, not native browser tab groups.</li>
+      </ul>
+    </section>
+    <section aria-labelledby="helpActions">
+      <h3 id="helpActions">Close, export and restore</h3>
+      <ul>
+        <li><strong>Dedup:</strong> keeps the clicked tab and closes other loaded copies of its normalized URL, including filtered-out and ignored tabs across windows. It does not protect other pinned or active copies.</li>
+        <li><strong>Close selected:</strong> select individual rows or all filtered tabs, including collapsed clusters. Changing filters removes hidden rows from the selection. Dashboard tabs are excluded.</li>
+        <li><strong>Export selected links:</strong> saves the selection; <strong>Export all links:</strong> saves all loaded tabs regardless of filters and ignores. Files contain one URL per line in current sort order. Duplicate URLs are preserved. Dashboard tabs and empty URLs are excluded. To export a filtered result, select all filtered tabs first.</li>
+        <li><strong>Restore most recently closed tab/window:</strong> the browser chooses one tab or window session from browser-wide history per click; this is not an exact undo of your action or batch. Another closure can change the chosen session. Private tabs and sessions no longer retained may not be recoverable.</li>
+      </ul>
+    </section>
+    <section aria-labelledby="helpSupport">
+      <h3 id="helpSupport">Project, privacy and support</h3>
+      <p>Tab Triage Dashboard is open source (MIT). It has no application backend or analytics and does not upload your tab list. Preferences stay in local extension storage; site-icon loading can cause network requests. Exports contain browsing URLs: review them before sharing.</p>
+      <nav class="help-links" aria-label="Project resources (open in new tabs)">
+        <a href="https://github.com/AlbertoOS/tab-triage-dashboard" target="_blank" rel="noopener noreferrer">Project</a>
+        <a href="https://github.com/AlbertoOS/tab-triage-dashboard/issues" target="_blank" rel="noopener noreferrer">Issues / support</a>
+        <a href="https://github.com/AlbertoOS/tab-triage-dashboard/releases" target="_blank" rel="noopener noreferrer">Releases</a>
+        <a href="https://github.com/AlbertoOS/tab-triage-dashboard/blob/main/PRIVACY.md" target="_blank" rel="noopener noreferrer">Privacy policy</a>
+      </nav>
+      <p>Reporting an issue requires a GitHub login. Issues are public. Do not post private tab URLs, tab lists, exports or screenshots containing sensitive information. Use a minimal example with synthetic tabs instead.</p>
+    </section>
+  </dialog>
 
   <script src="utils.js"></script>
   <script src="triage.js"></script>
