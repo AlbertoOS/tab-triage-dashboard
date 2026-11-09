@@ -122,6 +122,35 @@ label {
   flex-shrink: 0;
 }
 
+#liveRefreshInterval[hidden] {
+  display: none;
+}
+
+#liveRefreshSeconds {
+  width: 5em;
+  padding: 6px;
+  background: var(--surface1);
+  border: 1px solid var(--surface2);
+  border-radius: 4px;
+  color: var(--text);
+  font: inherit;
+}
+
+#liveRefreshSeconds:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+#liveRefreshSeconds[aria-invalid="true"] {
+  border-color: #ed8796;
+}
+
+.live-refresh-hint {
+  flex-basis: 100%;
+  color: var(--text);
+  font-size: 11px;
+}
+
 /* Favicon size slider */
 #faviconSize {
   width: 80px;
