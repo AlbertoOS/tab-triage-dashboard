@@ -327,7 +327,7 @@ it("gives every rendered menu action an inset visible keyboard focus outline", a
   await app.settle();
   const menu = app.get("tab-body").children[0].querySelector(".more-menu");
   assert.deepEqual(menu.children.map((button) => button.className),
-    ["btn-discard", "btn-ignore-url", "btn-ignore-domain"]);
+    ["btn-filter-domain", "btn-discard", "btn-ignore-url", "btn-ignore-domain"]);
   for (const button of menu.children) {
     button.focus();
     assert.equal(app.run("document.activeElement"), button);
