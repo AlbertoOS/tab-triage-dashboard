@@ -879,7 +879,7 @@ button:disabled, button[aria-disabled="true"] { opacity: 0.45; cursor: default; 
   flex-shrink: 0;
 }
 
-#helpDialog {
+#duplicateConfirmDialog, #helpDialog {
   width: min(760px, calc(100vw - 32px));
   max-height: calc(100vh - 32px);
   margin: auto;
@@ -893,7 +893,7 @@ button:disabled, button[aria-disabled="true"] { opacity: 0.45; cursor: default; 
   line-height: 1.6;
 }
 
-#helpDialog::backdrop {
+#duplicateConfirmDialog::backdrop, #helpDialog::backdrop {
   background: rgba(0, 0, 0, 0.65);
 }
 
@@ -915,6 +915,23 @@ button:disabled, button[aria-disabled="true"] { opacity: 0.45; cursor: default; 
   min-width: 0;
   font-size: 16px;
   color: var(--blue);
+}
+
+#duplicateConfirmMessage {
+  margin: 16px;
+  white-space: pre-wrap;
+}
+
+.duplicate-confirm-actions {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 16px;
+  background: var(--base);
+  border-top: 1px solid var(--surface2);
 }
 
 #helpClose {

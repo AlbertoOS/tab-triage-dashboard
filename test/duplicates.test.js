@@ -64,6 +64,15 @@ function activateSuccessor(id, tabs) {
   for (const item of siblings) item.active = item.id === next?.id;
 }
 
+async function clickDuplicateAction(app, button, accept = true) {
+  const pending = button.listeners.click({ stopPropagation() {} });
+  await app.settle();
+  if (app.get("duplicateConfirmDialog").open) {
+    app.get(accept ? "duplicateConfirmAccept" : "duplicateConfirmCancel").listeners.click();
+  }
+  await pending;
+}
+
 for (const namespace of ["chrome", "browser"]) {
   for (const mode of ["keep", "closeAll"]) {
     const label = mode === "keep" ? "Keep this" : "Close all copies";
@@ -75,9 +84,8 @@ for (const namespace of ["chrome", "browser"]) {
       });
       const app = dashboard(bg.send);
       await app.settle();
-      app.run("globalThis.confirm = () => true;");
       const row = app.get("tab-body").children.find((item) => item.dataset.tabId === String(clickedId));
-      await row.querySelector(selector).listeners.click({ stopPropagation() {} });
+      await clickDuplicateAction(app, row.querySelector(selector));
       assert.deepEqual(bg.tabs.map((item) => item.id), mode === "keep" ? [3] : []);
       assert.deepEqual(bg.removed, mode === "keep" ? [2, 1] : [2, 3, 1]);
       assert.match(app.get("undo-toast-msg").textContent, mode === "keep" ? /Closed 2 tabs/ : /Closed 3 tabs/);
@@ -93,9 +101,8 @@ for (const namespace of ["chrome", "browser"]) {
       });
       const app = dashboard(bg.send);
       await app.settle();
-      app.run("globalThis.confirm = () => true;");
       const row = app.get("tab-body").children.find((item) => item.dataset.tabId === String(clickedId));
-      await row.querySelector(selector).listeners.click({ stopPropagation() {} });
+      await clickDuplicateAction(app, row.querySelector(selector));
       assert.deepEqual(bg.tabs.map((item) => item.id), mode === "keep" ? [2, 3] : [2]);
       assert.equal(bg.removed.includes(2), false);
       assert.deepEqual([...bg.removed].sort((a, b) => a - b), mode === "keep" ? [1] : [1, 3]);
@@ -133,20 +140,18 @@ it("labels keep-this loaded scope and separately confirms close-all with pinned/
   assert.match(row.querySelector(".btn-dedup").textContent, /Keep this.*2/);
   assert.match(row.querySelector(".btn-dedup").title, /loaded.*all windows.*ignored/i);
   let question;
-  app.run('globalThis.confirm = (text) => { globalThis.question = text; return false; };');
   const closeAll = row.querySelector(".btn-close-copies");
   assert.ok(closeAll, "close all copies is distinct from keep this");
   closeAll.focus();
-  await closeAll.listeners.click({ stopPropagation() {} });
-  question = app.run("question");
+  await clickDuplicateAction(app, closeAll, false);
+  question = app.get("duplicateConfirmMessage").textContent;
   assert.match(question, /Close all copies/);
   assert.match(question, /3 tabs/);
   assert.match(question, /1 pinned.*1 active/);
   assert.match(question, /including this tab/);
   assert.deepEqual(bg.removed, []);
   assert.equal(app.run("document.activeElement"), closeAll);
-  app.run('globalThis.confirm = () => true;');
-  await closeAll.listeners.click({ stopPropagation() {} });
+  await clickDuplicateAction(app, closeAll);
   assert.deepEqual(bg.removed, [1, 3, 2]);
   assert.match(app.get("undo-toast-msg").textContent, /Closed 3 tabs/);
 });
@@ -165,14 +170,14 @@ it("confirms global browser-wide preview independently of filters and ignore lis
   const bg = broker([tab(3), tab(2), tab(1), tab(4, undefined, { pinned: true }), tab(5, undefined, { active: true, windowId: 2 })]);
   const app = dashboard(bg.send);
   await app.settle();
-  app.run('ignoredDomains.add("copies.example"); document.getElementById("search").value = "no results"; render(); globalThis.confirm = (text) => { globalThis.question = text; return false; };');
-  await app.get("dedupAll").listeners.click();
-  assert.match(app.run("question"), /all accessible windows.*filtered-out.*ignored/s);
-  assert.match(app.run("question"), /3 tabs/);
-  assert.match(app.run("question"), /protected.*remain/s);
+  app.run('ignoredDomains.add("copies.example"); document.getElementById("search").value = "no results"; render();');
+  await clickDuplicateAction(app, app.get("dedupAll"), false);
+  const question = app.get("duplicateConfirmMessage").textContent;
+  assert.match(question, /all accessible windows.*filtered-out.*ignored/s);
+  assert.match(question, /3 tabs/);
+  assert.match(question, /protected.*remain/s);
   assert.deepEqual(bg.removed, []);
-  app.run('globalThis.confirm = () => true;');
-  await app.get("dedupAll").listeners.click();
+  await clickDuplicateAction(app, app.get("dedupAll"));
   assert.deepEqual(bg.removed, [1, 2, 3]);
 });
 
@@ -338,10 +343,9 @@ it("preserves the global trigger's focus after asynchronous preview cancellation
   const bg = broker([tab(1), tab(2)]);
   const app = dashboard(bg.send);
   await app.settle();
-  app.run('globalThis.confirm = () => false;');
   const trigger = app.get("dedupAll");
   trigger.focus();
-  await trigger.listeners.click();
+  await clickDuplicateAction(app, trigger, false);
   assert.equal(app.run("document.activeElement"), trigger);
   assert.deepEqual(bg.removed, []);
   assert.equal(app.get("undo-toast").hidden, true);
@@ -352,11 +356,10 @@ it("preserves search through repeat events after confirmation cancellation", asy
   const app = dashboard(bg.send);
   await app.settle();
   app.get("search").value = "preserved-query";
-  app.run("globalThis.confirm = () => false;");
   const trigger = app.get("dedupAll");
   trigger.focus();
-  await trigger.listeners.click();
-  // Native confirmation consumes the initial Escape; later repeats reach the page.
+  await clickDuplicateAction(app, trigger, false);
+  // Repeat events after dialog cancellation must not clear the search.
   for (let repeat = 0; repeat < 8; repeat++) {
     app.documentListeners.keydown({ key: "Escape", repeat: true });
   }

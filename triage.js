@@ -144,6 +144,32 @@ function enrichTabs() {
 
 // --- Scoped duplicate actions ---
 let closingDuplicates = false;
+let resolveDuplicateConfirmation = null;
+let duplicateConfirmationOpener = null;
+
+function confirmAction(message, title = "Confirm duplicate closure", acceptLabel = "Confirm closure") {
+  if (resolveDuplicateConfirmation) return Promise.resolve(false);
+  const dialog = document.getElementById("duplicateConfirmDialog");
+  document.getElementById("duplicateConfirmTitle").textContent = title;
+  document.getElementById("duplicateConfirmMessage").textContent = message;
+  document.getElementById("duplicateConfirmAccept").textContent = acceptLabel;
+  dialog.returnValue = "";
+  const element = document.activeElement;
+  const row = Array.from(document.getElementById("tab-body").children).find((item) => item.contains(element));
+  // A refresh can replace the row while the asynchronous confirmation is open.
+  duplicateConfirmationOpener = { element, tabId: row?.dataset.tabId };
+  return new Promise((resolve, reject) => {
+    resolveDuplicateConfirmation = resolve;
+    try {
+      dialog.showModal();
+      document.getElementById("duplicateConfirmAccept").focus({ preventScroll: true });
+    } catch (error) {
+      resolveDuplicateConfirmation = null;
+      duplicateConfirmationOpener = null;
+      reject(error);
+    }
+  });
+}
 
 function duplicateCandidates(plan) {
   return plan.groups.flatMap((group) => group.candidates);
@@ -178,9 +204,9 @@ async function runDuplicateAction(mode, clickedId) {
       document.getElementById("duplicateStatus").textContent = "No eligible duplicate copies to close.";
       return;
     }
-    // Native confirmation supplies modal focus trapping and Escape cancellation.
-    // The keyboard handler ignores Escape repeats after dismissal.
-    if (mode !== "keep" && !confirm(duplicatePreviewText(plan))) return;
+    // Keep cancellation in the document: Firefox's browser prompt can leak a
+    // fresh nonrepeat Escape after dismissal, indistinguishable from a new press.
+    if (mode !== "keep" && !await confirmAction(duplicatePreviewText(plan))) return;
     attempted = true;
     const result = await sendCommand({ type: "closeDuplicates", plan });
     const outcomes = [result.closedCount, result.skippedCount, result.failedCount, result.unverifiedCount];
@@ -954,6 +980,27 @@ function updateIgnoredPanel() {
 
 document.getElementById("dedupAll").addEventListener("click", () => runDuplicateAction("global"));
 
+const duplicateConfirmDialog = document.getElementById("duplicateConfirmDialog");
+document.getElementById("duplicateConfirmCancel").addEventListener("click", () => duplicateConfirmDialog.close("cancel"));
+document.getElementById("duplicateConfirmAccept").addEventListener("click", () => duplicateConfirmDialog.close("confirm"));
+duplicateConfirmDialog.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  duplicateConfirmDialog.close("cancel");
+});
+duplicateConfirmDialog.addEventListener("close", () => {
+  const resolve = resolveDuplicateConfirmation;
+  if (!resolve) return;
+  const accepted = duplicateConfirmDialog.returnValue === "confirm";
+  resolveDuplicateConfirmation = null;
+  const opener = duplicateConfirmationOpener;
+  duplicateConfirmationOpener = null;
+  const focusTarget = opener?.tabId === undefined ? opener?.element
+    : Array.from(document.getElementById("tab-body").children)
+      .find((row) => row.dataset.tabId === opener.tabId)?.querySelector(".btn-close-copies");
+  (focusTarget || document.getElementById("search")).focus({ preventScroll: true });
+  resolve(accepted);
+});
+
 // Native dialog supplies modal focus containment in supported Firefox/Chrome.
 const helpDialog = document.getElementById("helpDialog");
 document.getElementById("helpAbout").addEventListener("click", () => {
@@ -1121,9 +1168,9 @@ document.getElementById("toggleIgnoredPanel").addEventListener("click", () => {
 });
 
 // Reset all ignored
-document.getElementById("resetIgnored").addEventListener("click", () => {
-  if (confirm("Remove all ignored URLs and domains?")) {
-    resetAllIgnored();
+document.getElementById("resetIgnored").addEventListener("click", async () => {
+  if (await confirmAction("Remove all ignored URLs and domains?", "Reset ignored lists", "Reset ignored lists")) {
+    await resetAllIgnored();
   }
 });
 
@@ -1160,6 +1207,11 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     // Holding the dismissal key must not become a second search-clear action.
     if (e.repeat) return;
+    if (duplicateConfirmDialog.open) {
+      e.preventDefault();
+      duplicateConfirmDialog.close("cancel");
+      return;
+    }
     if (helpDialog.open) {
       e.preventDefault();
       helpDialog.close();

@@ -43,7 +43,7 @@ function dashboard(sendMessage, storage = {}, browser = {}) {
       focus() { if (!this.disabled) activeElement = this; },
       open: false,
       showModal() { this.open = true; },
-      close() { this.open = false; this.listeners.close?.(); },
+      close(value = "") { this.returnValue = value; this.open = false; this.listeners.close?.(); },
       contains(child) { return child === this || this.children.some((item) => item.contains(child)); },
       cloneNode() { return Object.assign(element(), { disabled: this.disabled }); },
       replaceWith(next) {
@@ -72,9 +72,9 @@ function dashboard(sendMessage, storage = {}, browser = {}) {
   };
   get("groupBy").value = "none";
   const html = fs.readFileSync(path.join(__dirname, "../triage.html"), "utf8");
-  // Bind Help controls to the shipped HTML rather than inventing fixture nodes.
+  // Bind dialog controls to the shipped HTML rather than inventing fixture nodes.
   // This parses static markup only; native modality/Tab traversal need browser acceptance.
-  const helpMarkup = html.match(/<dialog\b[^>]*id="helpDialog"[\s\S]*?<\/dialog>/)?.[0] || "";
+  const helpMarkup = [...html.matchAll(/<dialog\b[\s\S]*?<\/dialog>/g)].map(([markup]) => markup).join("");
   const helpStack = [];
   for (const [token] of helpMarkup.matchAll(/<[^>]+>|[^<]+/g)) {
     if (token.startsWith("</")) {

@@ -55,41 +55,89 @@ async function executeDuplicatePlan(plan) {
   }
   const dashboardUrl = api.runtime.getURL("triage.html");
   const result = { ok: true, closedCount: 0, skippedCount: 0, failedCount: 0, unverifiedCount: 0 };
-  for (const group of plan.groups) {
-    for (const candidate of group.candidates) {
-      try {
-        const tabs = await api.tabs.query({});
-        const tab = tabs.find((tab) => tab.id === candidate.id);
-        // Firefox can expose the previous URL while loading without pendingUrl.
-        // Do not close a candidate or rely on a keeper with an unknown destination.
-        const matches = (tab) => tab && (tab.status !== "loading" || !!tab.pendingUrl) &&
-          normalizeUrl(tab.url) === group.key &&
-          (!tab.pendingUrl || normalizeUrl(tab.pendingUrl) === group.key);
-        const keeperLives = plan.mode === "closeAll" || group.keeperIds.some((id) =>
-          matches(tabs.find((tab) => tab.id === id)));
-        if (!matches(tab) || tab.url !== candidate.url || tab.windowId !== candidate.windowId || !keeperLives ||
-            isDashboardTab(tab, dashboardUrl) ||
-            (plan.mode === "global" ? tab.pinned || tab.active :
-              (tab.pinned && !candidate.pinned) || (tab.active && !candidate.active))) {
-          result.skippedCount++;
-          continue;
-        }
-        // Browser APIs have no atomic query-and-remove. This guard narrows, but
-        // cannot eliminate, navigation/activation races after the final query.
-        try { await api.tabs.remove(candidate.id); } catch { /* Readback determines the actual outcome. */ }
+  // Observe only the exact removal currently being attempted, not a stale or
+  // unrelated event. A remove promise alone is not proof that a tab closed.
+  let removingId;
+  let removalObserved = false;
+  const onRemoved = (id) => { if (id === removingId) removalObserved = true; };
+  const removalEvents = api.tabs.onRemoved;
+  const observeRemovals = !!removalEvents?.addListener && !!removalEvents?.removeListener;
+  if (observeRemovals) removalEvents.addListener(onRemoved);
+  try {
+    for (const group of plan.groups) {
+      // Cache a preferred identity only; its live state is read before every close.
+      let preferredKeeper = group.keeperIds[0];
+      for (const candidate of group.candidates) {
         try {
-          const remains = (await api.tabs.query({})).some((tab) => tab.id === candidate.id);
-          if (!remains) result.closedCount++;
-          else result.failedCount++;
+          let inventory;
+          const readTab = async (id) => {
+            if (!inventory && typeof api.tabs.get === "function") {
+              try { return await api.tabs.get(id); } catch { /* Absence and API failure are ambiguous. */ }
+            }
+            if (!inventory) inventory = await api.tabs.query({});
+            return inventory.find((tab) => tab.id === id);
+          };
+          // Firefox can expose the previous URL while loading without pendingUrl.
+          // Do not close a candidate or rely on a keeper with an unknown destination.
+          const matches = (tab) => tab && (tab.status !== "loading" || !!tab.pendingUrl) &&
+            normalizeUrl(tab.url) === group.key &&
+            (!tab.pendingUrl || normalizeUrl(tab.pendingUrl) === group.key);
+          let keeperLives = plan.mode === "closeAll";
+          if (!keeperLives) {
+            if (matches(await readTab(preferredKeeper))) keeperLives = true;
+            else {
+              for (const id of group.keeperIds) {
+                if (id !== preferredKeeper && matches(await readTab(id))) {
+                  preferredKeeper = id;
+                  keeperLives = true;
+                  break;
+                }
+              }
+            }
+          }
+          const tab = await readTab(candidate.id);
+          if (!matches(tab) || tab.url !== candidate.url || tab.windowId !== candidate.windowId || !keeperLives ||
+              isDashboardTab(tab, dashboardUrl) ||
+              (plan.mode === "global" ? tab.pinned || tab.active :
+                (tab.pinned && !candidate.pinned) || (tab.active && !candidate.active))) {
+            result.skippedCount++;
+            continue;
+          }
+          // Browser APIs have no atomic read-and-remove. These fresh checks narrow,
+          // but cannot eliminate, navigation/activation races after the final read.
+          removingId = candidate.id;
+          removalObserved = false;
+          try { await api.tabs.remove(candidate.id); } catch { /* Readback determines the actual outcome. */ }
+          try {
+            let remains;
+            if (removalObserved) remains = false;
+            else if (observeRemovals && typeof api.tabs.get === "function") {
+              try { await api.tabs.get(candidate.id); remains = true; } catch {
+                // The event and promise can arrive in different tasks. Yield once,
+                // not indefinitely: a missing/late event still needs query readback.
+                await new Promise((resolve) => setTimeout(resolve, 0));
+                if (removalObserved) remains = false;
+              }
+            }
+            if (remains === undefined) {
+              remains = (await api.tabs.query({})).some((tab) => tab.id === candidate.id);
+            }
+            if (!remains) result.closedCount++;
+            else result.failedCount++;
+          } catch {
+            result.unverifiedCount++;
+          } finally {
+            removingId = undefined;
+          }
         } catch {
-          result.unverifiedCount++;
+          result.failedCount++;
         }
-      } catch {
-        result.failedCount++;
       }
     }
+    return result;
+  } finally {
+    if (observeRemovals) removalEvents.removeListener(onRemoved);
   }
-  return result;
 }
 
 const openingDashboards = new Map();
