@@ -122,10 +122,12 @@ async function executeDuplicatePlan(plan) {
             if (remains === undefined) {
               remains = (await api.tabs.query({})).some((tab) => tab.id === candidate.id);
             }
-            if (!remains) result.closedCount++;
+            // An exact removal event can arrive during an awaited readback.
+            if (removalObserved || !remains) result.closedCount++;
             else result.failedCount++;
           } catch {
-            result.unverifiedCount++;
+            if (removalObserved) result.closedCount++;
+            else result.unverifiedCount++;
           } finally {
             removingId = undefined;
           }

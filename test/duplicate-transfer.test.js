@@ -60,6 +60,46 @@ function broker(initial, namespace = "browser", hooks = {}) {
 }
 
 for (const namespace of ["browser", "chrome"]) {
+  for (const kind of ["get-stale", "query-stale", "query-rejected"]) {
+    for (const matchingEvent of [true, false]) {
+      it(`prioritizes only exact removal evidence during ${kind} through ${namespace} (matching=${matchingEvent})`, async () => {
+        let removing = false;
+        let event;
+        let observed = 0;
+        const bg = broker([tab(0), tab(1)], namespace, {
+          remove(id, tabs, emit) {
+            removing = true;
+            event = () => { observed++; emit(matchingEvent ? id : 999); };
+            // A pending browser snapshot can still contain the removed record.
+            if (kind === "query-rejected") tabs.delete(id);
+          },
+          async get() {
+            if (!removing) return;
+            if (kind === "get-stale") { await Promise.resolve(); event(); }
+            else throw new Error("Unavailable candidate read");
+          },
+          async query() {
+            if (!removing) return;
+            await Promise.resolve();
+            event();
+            if (kind === "query-rejected") throw new Error("Readback unavailable");
+          },
+        });
+        const { plan } = await bg.send({ type: "previewDuplicates" });
+        const result = await bg.send({ type: "closeDuplicates", plan });
+        assert.equal(observed, 1);
+        assert.equal(bg.listeners.size, 0);
+        assert.deepEqual(JSON.parse(JSON.stringify(result)), {
+          ok: true,
+          closedCount: matchingEvent ? 1 : 0,
+          skippedCount: 0,
+          failedCount: !matchingEvent && kind !== "query-rejected" ? 1 : 0,
+          unverifiedCount: !matchingEvent && kind === "query-rejected" ? 1 : 0,
+        });
+      });
+    }
+  }
+
   it(`accepts removal events delivered in the next task without full inventory transfers through ${namespace}`, async () => {
     const bg = broker(Array.from({ length: 20 }, (_, id) => tab(id)), namespace, {
       remove(id, tabs, emit) {
