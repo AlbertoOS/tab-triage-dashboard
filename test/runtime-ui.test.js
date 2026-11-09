@@ -43,7 +43,7 @@ function dashboard(sendMessage, storage = {}, browser = {}) {
       focus() { if (!this.disabled) activeElement = this; },
       open: false,
       showModal() { this.open = true; },
-      close() { this.open = false; this.listeners.close?.(); },
+      close(value = "") { this.returnValue = value; this.open = false; this.listeners.close?.(); },
       contains(child) { return child === this || this.children.some((item) => item.contains(child)); },
       cloneNode() { return Object.assign(element(), { disabled: this.disabled }); },
       replaceWith(next) {
@@ -72,9 +72,9 @@ function dashboard(sendMessage, storage = {}, browser = {}) {
   };
   get("groupBy").value = "none";
   const html = fs.readFileSync(path.join(__dirname, "../triage.html"), "utf8");
-  // Bind Help controls to the shipped HTML rather than inventing fixture nodes.
+  // Bind dialog controls to the shipped HTML rather than inventing fixture nodes.
   // This parses static markup only; native modality/Tab traversal need browser acceptance.
-  const helpMarkup = html.match(/<dialog\b[^>]*id="helpDialog"[\s\S]*?<\/dialog>/)?.[0] || "";
+  const helpMarkup = [...html.matchAll(/<dialog\b[\s\S]*?<\/dialog>/g)].map(([markup]) => markup).join("");
   const helpStack = [];
   for (const [token] of helpMarkup.matchAll(/<[^>]+>|[^<]+/g)) {
     if (token.startsWith("</")) {
@@ -159,7 +159,7 @@ function dashboard(sendMessage, storage = {}, browser = {}) {
 }
 
 for (const [selector, type] of [[".btn-close", "closeTab"], [".btn-goto", "goToTab"],
-  [".btn-discard", "discardTab"], [".btn-dedup", "closeTabs"]]) {
+  [".btn-discard", "discardTab"], [".btn-dedup", "closeDuplicates"]]) {
   it(`contains ${type} errors without false recovery and refreshes partial browser state`, async () => {
     let queries = 0;
     const app = dashboard((message) => {
@@ -181,7 +181,7 @@ for (const [selector, type] of [[".btn-close", "closeTab"], [".btn-goto", "goToT
 }
 
 for (const [selector, type] of [[".btn-goto", "goToTab"], [".btn-discard", "discardTab"],
-  [".btn-close", "closeTab"], [".btn-dedup", "closeTabs"]]) {
+  [".btn-close", "closeTab"], [".btn-dedup", "closeDuplicates"]]) {
   const outcomes = type === "goToTab" || type === "discardTab" ? ["success", "denied", "rejected"] : ["denied", "rejected"];
   for (const outcome of outcomes) {
     it(`preserves existing recovery through ${type} ${outcome}`, async () => {
