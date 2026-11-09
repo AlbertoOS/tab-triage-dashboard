@@ -10,6 +10,7 @@ function dashboard(sendMessage, storage = {}, browser = {}) {
   const documentListeners = {};
   const timers = new Map();
   let now = 0;
+  const wallStart = Date.now();
   let timerId = 0;
   let activeElement;
   function advanceTime(ms) {
@@ -28,7 +29,20 @@ function dashboard(sendMessage, storage = {}, browser = {}) {
     return {
       tag, offsetHeight: 0,
       children: [], listeners: {}, dataset: {}, style: { setProperty() {} }, value: "", hidden: true,
-      classList: { toggle() {}, add() {}, remove() {} },
+      get parentElement() { return this.parent; },
+      get classList() {
+        const node = this;
+        return {
+          contains: (name) => (node.className || "").split(" ").includes(name),
+          add(...names) { node.className = [...new Set([...(node.className || "").split(" ").filter(Boolean), ...names])].join(" "); },
+          remove(...names) { node.className = (node.className || "").split(" ").filter((name) => !names.includes(name)).join(" "); },
+          toggle(name, force) {
+            const add = force ?? !this.contains(name);
+            if (add) this.add(name); else this.remove(name);
+            return add;
+          },
+        };
+      },
       appendChild(child) { this.children.push(child); child.parent = this; return child; },
       addEventListener(type, fn) { this.listeners[type] = fn; },
       attributes: {},
@@ -44,6 +58,7 @@ function dashboard(sendMessage, storage = {}, browser = {}) {
       open: false,
       showModal() { this.open = true; },
       close(value = "") { this.returnValue = value; this.open = false; this.listeners.close?.(); },
+      getBoundingClientRect() { return { top: 100, bottom: 124, right: 200, width: 120, height: 80 }; },
       contains(child) { return child === this || this.children.some((item) => item.contains(child)); },
       cloneNode() { return Object.assign(element(), { disabled: this.disabled }); },
       replaceWith(next) {
@@ -72,6 +87,21 @@ function dashboard(sendMessage, storage = {}, browser = {}) {
   };
   get("groupBy").value = "none";
   const html = fs.readFileSync(path.join(__dirname, "../triage.html"), "utf8");
+  // Read static controls from shipped markup, including their declared bounds.
+  const staticControlIds = new Set();
+  for (const [, tag, attributes] of html.matchAll(/<(input|select)\b([^>]*)>/g)) {
+    const id = attributes.match(/\bid="([^"]+)"/)?.[1];
+    if (!id) continue;
+    staticControlIds.add(id);
+    const node = get(id);
+    node.tag = tag;
+    for (const [, name, value] of attributes.matchAll(/([\w-]+)="([^"]*)"/g)) node.setAttribute(name, value);
+    if (node.getAttribute("value") !== null) node.value = node.getAttribute("value");
+    if (tag === "select") {
+      const options = html.slice(html.indexOf(`<select${attributes}>`) + attributes.length + 8).split("</select>")[0];
+      node.value = options.match(/<option\s+value="([^"]+)"/)?.[1] || "";
+    }
+  }
   // Bind dialog controls to the shipped HTML rather than inventing fixture nodes.
   // This parses static markup only; native modality/Tab traversal need browser acceptance.
   const helpMarkup = [...html.matchAll(/<dialog\b[\s\S]*?<\/dialog>/g)].map(([markup]) => markup).join("");
@@ -92,6 +122,20 @@ function dashboard(sendMessage, storage = {}, browser = {}) {
     }
   }
   const headers = [];
+  const ageInputs = [...html.matchAll(/<input\b([^>]*name="filterAge"[^>]*)>/g)].map(([, attributes]) => {
+    const node = element("input");
+    node.name = "filterAge";
+    node.value = attributes.match(/value="([^"]+)"/)[1];
+    node.checked = false;
+    return node;
+  });
+  const statusButtons = [...html.matchAll(/<button\b([^>]*class="status-toggle"[^>]*)>/g)].map(([, attributes]) => {
+    const node = element("button");
+    node.className = "status-toggle";
+    node.dataset.status = attributes.match(/data-status="([^"]+)"/)[1];
+    node.dataset.state = attributes.match(/data-state="([^"]+)"/)[1];
+    return node;
+  });
   for (const [, attributes, label] of html.matchAll(/<th\b([^>]*)>([^<]*)/g)) {
     const sort = attributes.match(/data-sort="([^"]+)"/);
     if (!sort) continue;
@@ -113,6 +157,7 @@ function dashboard(sendMessage, storage = {}, browser = {}) {
   const resizeObservers = [];
   const context = vm.createContext({
     URL, console,
+    Date: class extends Date { static now() { return wallStart + now; } },
     ResizeObserver: class {
       constructor(callback) { resizeObservers.push(callback); }
       observe() {}
@@ -123,7 +168,7 @@ function dashboard(sendMessage, storage = {}, browser = {}) {
       return timerId;
     },
     clearTimeout(id) { timers.delete(id); },
-    window: { addEventListener() {} },
+    window: { innerWidth: 1200, innerHeight: 800, addEventListener() {} },
     chrome: {
       tabs: { getCurrent: async () => ({ id: 100 }), ...browser.tabs },
       runtime: { id: "fixture", getURL: () => "chrome-extension://fixture/triage.html",
@@ -136,9 +181,20 @@ function dashboard(sendMessage, storage = {}, browser = {}) {
       },
       storage: { local: { get: async () => ({}), set: async () => {}, ...storage } },
     },
-    document: { get activeElement() { return activeElement; },
+    document: { hidden: false, visibilityState: "visible", get activeElement() { return activeElement; },
       getElementById: get, createElement: element,
       querySelectorAll: (selector) => {
+        if (selector === ".status-toggle") return statusButtons;
+        if (selector === 'input[name="filterAge"]') return ageInputs;
+        if (selector === 'input[name="filterAge"]:checked') return ageInputs.filter((input) => input.checked);
+        if (selector === '#domainList label:not([style*="display: none"]) input') {
+          return get("domainList").children.filter((label) => label.style.display !== "none").map((label) => label.querySelector("input"));
+        }
+        if (selector === "#domainList label") return get("domainList").children;
+        if (selector === ".more-menu.open") {
+          return get("tab-body").children.map((row) => row.querySelector(".more-menu"))
+            .filter((menu) => menu?.classList.contains("open"));
+        }
         if (selector === "th.sortable") return headers;
         if (selector === 'input[name="filterDomain"]' || selector === 'input[name="filterDomain"]:checked') {
           return get("domainList").children.map((label) => label.querySelector("input"))
@@ -153,7 +209,7 @@ function dashboard(sendMessage, storage = {}, browser = {}) {
   for (const file of ["utils.js", "triage.js"]) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, "..", file), "utf8"), context);
   }
-  return { get, messages, messageListeners, documentListeners, advanceTime, resize: () => resizeObservers.forEach((callback) => callback()),
+  return { get, staticControlIds, messages, messageListeners, documentListeners, advanceTime, resize: () => resizeObservers.forEach((callback) => callback()),
     run: (code) => vm.runInContext(code, context),
     settle: () => new Promise(setImmediate) };
 }

@@ -53,38 +53,75 @@ async function runTabAction(message, successMessage) {
   }
 }
 
-let latestLoad;
+let inventoryLoading = false;
+let queuedLoad;
 
-function loadTabs(shouldReportError = () => true) {
-  const request = {};
-  const ignoreRevision = ignoreEditRevision;
-  const ignoreSavePending = pendingIgnoreSaves > 0;
-  latestLoad = request;
-  request.promise = (async () => {
+function loadTabs(shouldReportError = () => true, automatic = false) {
+  if (!queuedLoad) {
+    let resolve;
+    const promise = new Promise((done) => { resolve = done; });
+    queuedLoad = { promise, resolve };
+  }
+  Object.assign(queuedLoad, {
+    shouldReportError,
+    automatic,
+    ignoreRevision: ignoreEditRevision,
+    ignoreSavePending: pendingIgnoreSaves > 0,
+  });
+  const promise = queuedLoad.promise;
+  if (!inventoryLoading) drainInventoryLoads();
+  return promise;
+}
+
+async function drainInventoryLoads() {
+  inventoryLoading = true;
+  clearTimeout(automaticTimer);
+  automaticTimer = undefined;
+  while (queuedLoad) {
+    const request = queuedLoad;
+    queuedLoad = undefined;
+    if (!request.automatic) {
+      inventoryDirty = false;
+      automaticReconcile = false;
+    }
+    let result;
     try {
       const ignoreLists = await loadIgnoreLists();
       const response = await sendCommand({ type: "getTabs" });
       if (!Array.isArray(response.tabs)) throw new Error("Invalid tab response.");
-      if (latestLoad !== request) return latestLoad.promise;
-      allTabs = response.tabs;
-      // A local edit owns preferences, not inventory. A save already pending at
-      // read start can also make storage stale without changing this revision.
-      if (ignoreEditRevision === ignoreRevision && !ignoreSavePending) {
-        ignoredUrls = ignoreLists.ignoredUrls;
-        ignoredDomains = ignoreLists.ignoredDomains;
+      const useStoredIgnores = ignoreEditRevision === request.ignoreRevision && !request.ignoreSavePending;
+      const sameSet = (left, right) => left.size === right.size && [...left].every((value) => right.has(value));
+      const samePreferences = !useStoredIgnores || (sameSet(ignoredUrls, ignoreLists.ignoredUrls) &&
+        sameSet(ignoredDomains, ignoreLists.ignoredDomains));
+      const now = Date.now();
+      const unchanged = request.automatic && samePreferences && JSON.stringify(allTabs) === JSON.stringify(response.tabs) &&
+        enrichedTabs.every((tab) => tab.ageText === formatAge(now - tab.lastAccessed) &&
+          tab.ageBucket === getAgeBucket(now - tab.lastAccessed));
+      if (!queuedLoad && request.automatic && !automaticRefreshAllowed()) {
+        inventoryDirty = true;
+        automaticReconcile = true;
+      } else if (!queuedLoad && !unchanged) {
+        allTabs = response.tabs;
+        // Local edits and saves already pending at request time own preferences.
+        if (useStoredIgnores) {
+          ignoredUrls = ignoreLists.ignoredUrls;
+          ignoredDomains = ignoreLists.ignoredDomains;
+        }
+        enrichTabs();
+        populateDomainFilter();
+        render();
+        updateIgnoredPanel();
       }
-      enrichTabs();
-      populateDomainFilter();
-      render();
-      updateIgnoredPanel();
-      return { ok: true };
+      result = { ok: true };
     } catch (error) {
-      if (latestLoad !== request) return latestLoad.promise;
-      if (shouldReportError()) reportError(`Could not refresh tabs: ${error.message}`);
-      return { ok: false, error: error.message };
+      if (!queuedLoad && request.shouldReportError()) reportError(`Could not refresh tabs: ${error.message}`);
+      result = { ok: false, error: error.message };
     }
-  })();
-  return request.promise;
+    // Explicit requests made during a read require a newer snapshot, not a join.
+    request.resolve(queuedLoad ? queuedLoad.promise : result);
+  }
+  inventoryLoading = false;
+  scheduleAutomaticRefresh();
 }
 
 function enrichTabs() {
@@ -511,6 +548,7 @@ function render() {
     if (target) target.focus({ preventScroll: true });
     else document.getElementById("search").focus();
   }
+  scheduleAutomaticRefresh();
 }
 
 function createTabRow(tab) {
@@ -764,6 +802,7 @@ function createTabRow(tab) {
       if (m !== moreMenuEl) m.classList.remove("open");
     });
     moreMenuEl.classList.toggle("open");
+    scheduleAutomaticRefresh();
     if (!moreMenuEl.classList.contains("open")) return;
     // Flip and clamp within the viewport above any visible recovery notice.
     const rect = moreBtnEl.getBoundingClientRect();
@@ -812,6 +851,9 @@ function updateSortHeaders() {
 
 function populateDomainFilter() {
   const selectedDomains = new Set(getSelectedDomains());
+  const focusedDomain = Array.from(document.querySelectorAll('input[name="filterDomain"]'))
+    .find((input) => input === document.activeElement)?.value;
+  const query = document.getElementById("domainSearch").value.toLowerCase();
   const domainCounts = Object.create(null);
   for (const tab of enrichedTabs) {
     if (tab.domain) {
@@ -834,6 +876,7 @@ function populateDomainFilter() {
     checkbox.name = "filterDomain";
     checkbox.value = domain;
     checkbox.checked = selectedDomains.has(domain);
+    label.style.display = domain.toLowerCase().includes(query) ? "" : "none";
     label.appendChild(checkbox);
     const nameSpan = document.createElement("span");
     nameSpan.textContent = domain;
@@ -847,8 +890,12 @@ function populateDomainFilter() {
       render();
     });
     list.appendChild(label);
+    if (domain === focusedDomain && label.style.display !== "none") checkbox.focus({ preventScroll: true });
   }
 
+  if (focusedDomain !== undefined && !list.contains(document.activeElement)) {
+    document.getElementById("domainSearch").focus({ preventScroll: true });
+  }
   updateDomainButtonLabel();
 }
 
@@ -959,12 +1006,16 @@ function updateIgnoredPanel() {
   const urlList = document.getElementById("ignoredUrlList");
   const domainList = document.getElementById("ignoredDomainList");
   const count = document.getElementById("ignoredCount");
+  const focusedList = [urlList, domainList].find((list) => list.contains(document.activeElement));
+  const focusedValue = focusedList && Array.from(focusedList.children)
+    .find((item) => item.contains(document.activeElement))?.dataset.ignoreValue;
 
   count.textContent = `${ignoredUrls.size} URLs, ${ignoredDomains.size} domains`;
 
   urlList.innerHTML = "";
   for (const url of [...ignoredUrls].sort()) {
     const li = document.createElement("li");
+    li.dataset.ignoreValue = url;
     const textSpan = document.createElement("span");
     textSpan.className = "ignored-item-text";
     textSpan.title = url;
@@ -982,6 +1033,7 @@ function updateIgnoredPanel() {
   domainList.innerHTML = "";
   for (const domain of [...ignoredDomains].sort()) {
     const li = document.createElement("li");
+    li.dataset.ignoreValue = domain;
     const textSpan = document.createElement("span");
     textSpan.className = "ignored-item-text";
     textSpan.textContent = domain;
@@ -993,6 +1045,11 @@ function updateIgnoredPanel() {
     removeBtn.addEventListener("click", () => unignoreDomain(domain));
     li.appendChild(removeBtn);
     domainList.appendChild(li);
+  }
+  if (focusedList) {
+    const replacement = Array.from(focusedList.children).find((item) => item.dataset.ignoreValue === focusedValue);
+    (replacement?.querySelector(".btn-unignore") || document.getElementById("toggleIgnoredPanel"))
+      .focus({ preventScroll: true });
   }
 }
 
@@ -1019,6 +1076,7 @@ duplicateConfirmDialog.addEventListener("close", () => {
       .find((row) => row.dataset.tabId === opener.tabId)?.querySelector(".btn-close-copies");
   (focusTarget || document.getElementById("search")).focus({ preventScroll: true });
   resolve(accepted);
+  scheduleAutomaticRefresh();
 });
 
 // Native dialog supplies modal focus containment in supported Firefox/Chrome.
@@ -1042,7 +1100,10 @@ document.getElementById("helpAbout").addEventListener("click", () => {
   document.getElementById("helpClose").focus();
 });
 document.getElementById("helpClose").addEventListener("click", () => helpDialog.close());
-helpDialog.addEventListener("close", () => document.getElementById("helpAbout").focus({ preventScroll: true }));
+helpDialog.addEventListener("close", () => {
+  document.getElementById("helpAbout").focus({ preventScroll: true });
+  scheduleAutomaticRefresh();
+});
 
 document.getElementById("selectFiltered").addEventListener("click", () => selectFilteredTabs(true));
 document.getElementById("clearSelection").addEventListener("click", () => selectFilteredTabs(false));
@@ -1095,6 +1156,7 @@ const domainPanel = document.getElementById("domainDropdown");
 domainBtn.addEventListener("click", (e) => {
   e.stopPropagation();
   domainPanel.classList.toggle("open");
+  scheduleAutomaticRefresh();
   if (domainPanel.classList.contains("open")) {
     setTimeout(() => document.getElementById("domainSearch").focus(), 0);
   }
@@ -1108,6 +1170,7 @@ document.addEventListener("click", (e) => {
   if (!e.target.closest(".more-dropdown")) {
     document.querySelectorAll(".more-menu.open").forEach((m) => m.classList.remove("open"));
   }
+  scheduleAutomaticRefresh();
 });
 
 // Fixed row menus must not remain beside a different row after the page moves.
@@ -1118,6 +1181,7 @@ function closeRowMenus() {
     }
     menu.classList.remove("open");
   });
+  scheduleAutomaticRefresh();
 }
 
 document.addEventListener("scroll", (event) => {
@@ -1309,7 +1373,109 @@ function showUndoToast(message) {
   });
 }
 
+// --- Live inventory ---
+let automaticTimer;
+let inventoryDirty = false;
+let automaticReconcile = false;
+let liveRefresh = { mode: "instant", seconds: 5 };
+let liveRefreshEdited = false;
+let liveRefreshReady = false;
+
+function validLiveRefreshSettings(settings) {
+  return settings && ["instant", "timed", "off"].includes(settings.mode) &&
+    Number.isInteger(settings.seconds) && settings.seconds >= 1 && settings.seconds <= 60;
+}
+
+function applyLiveRefreshSettings(settings) {
+  if (!validLiveRefreshSettings(settings)) return;
+  liveRefresh = { mode: settings.mode, seconds: settings.seconds };
+  document.getElementById("liveRefreshMode").value = settings.mode;
+  document.getElementById("liveRefreshSeconds").value = settings.seconds;
+  document.getElementById("liveRefreshInterval").hidden = settings.mode !== "timed";
+  clearTimeout(automaticTimer);
+  automaticTimer = undefined;
+  scheduleAutomaticRefresh();
+}
+
+async function saveLiveRefreshSettings() {
+  liveRefreshEdited = true;
+  liveRefreshReady = true;
+  const interval = document.getElementById("liveRefreshSeconds");
+  const mode = document.getElementById("liveRefreshMode").value;
+  const settings = { mode, seconds: mode === "timed" ? Number(interval.value) : liveRefresh.seconds };
+  if (!validLiveRefreshSettings(settings)) {
+    interval.setAttribute("aria-invalid", "true");
+    return;
+  }
+  interval.removeAttribute("aria-invalid");
+  applyLiveRefreshSettings(settings);
+  try {
+    await api.storage.local.set({ liveRefresh });
+  } catch (error) {
+    reportError(`Could not save live inventory settings: ${error.message}`);
+  }
+}
+
+function automaticRefreshAllowed() {
+  return !document.hidden && liveRefresh.mode !== "off" &&
+    !duplicateConfirmDialog.open && !helpDialog.open &&
+    !domainPanel.classList.contains("open") && document.querySelectorAll(".more-menu.open").length === 0;
+}
+
+function scheduleAutomaticRefresh() {
+  if (liveRefresh.mode === "instant" && !inventoryDirty) return;
+  if (!liveRefreshReady) return;
+  if (!automaticRefreshAllowed() || inventoryLoading || automaticTimer !== undefined) return;
+  automaticTimer = setTimeout(() => {
+    automaticTimer = undefined;
+    if (!automaticRefreshAllowed()) {
+      inventoryDirty = true;
+      automaticReconcile = true;
+      return;
+    }
+    if (inventoryLoading) return;
+    inventoryDirty = false;
+    automaticReconcile = false;
+    loadTabs(() => false, true);
+  }, liveRefresh.mode === "timed" && !automaticReconcile ? liveRefresh.seconds * 1000 : 150);
+}
+
+function invalidateInventory() {
+  inventoryDirty = true;
+  scheduleAutomaticRefresh();
+}
+
+function initializeLiveRefresh() {
+  document.getElementById("liveRefreshMode").addEventListener("change", saveLiveRefreshSettings);
+  document.getElementById("liveRefreshSeconds").addEventListener("change", saveLiveRefreshSettings);
+  api.storage.local.get("liveRefresh").then((result) => {
+    liveRefreshReady = true;
+    if (!liveRefreshEdited && result.liveRefresh) applyLiveRefreshSettings(result.liveRefresh);
+    scheduleAutomaticRefresh();
+  }).catch((error) => {
+    liveRefreshReady = true;
+    reportError(`Could not load live inventory settings: ${error.message}`);
+    scheduleAutomaticRefresh();
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    clearTimeout(automaticTimer);
+    automaticTimer = undefined;
+    inventoryDirty = true;
+    automaticReconcile = true;
+    scheduleAutomaticRefresh();
+  });
+
+  for (const name of ["onRemoved", "onCreated", "onUpdated", "onMoved", "onAttached", "onDetached", "onActivated", "onReplaced"]) {
+    api.tabs[name]?.addListener(name === "onUpdated" ? (tabId, changes) => {
+      if (["url", "pendingUrl", "title", "favIconUrl", "pinned", "audible", "mutedInfo", "discarded", "active", "lastAccessed", "status"]
+        .some((key) => Object.hasOwn(changes, key))) invalidateInventory();
+    } : invalidateInventory);
+  }
+}
+
 // --- Init ---
+initializeLiveRefresh();
 // Resolve this page's identity before initial load so broadcasts can be ignored
 // synchronously by every non-target page without claiming a response channel.
 api.tabs.getCurrent().then((tab) => {

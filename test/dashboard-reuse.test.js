@@ -91,9 +91,12 @@ it("ordinary and manual loads publish only the latest requested inventory", asyn
   await app.settle();
   const manual = app.get("refresh").listeners.click();
   await app.settle();
+  assert.equal(queries.length, 1, "the newer request queues behind the active inventory read");
+  queries[0].resolve({ ok: true, tabs: [tab(1)] });
+  await app.settle();
+  assert.deepEqual(Array.from(app.run("allTabs")), [], "a superseded read cannot publish");
   queries[1].resolve({ ok: true, tabs: [tab(2)] });
   await manual;
-  queries[0].resolve({ ok: true, tabs: [tab(1)] });
   await app.settle();
   assert.deepEqual(Array.from(app.run("allTabs.map((tab) => tab.id)")), [2]);
   assert.deepEqual(Array.from(app.get("tab-body").children, (row) => row.dataset.tabId), ["2"]);
@@ -135,9 +138,11 @@ for (const owner of ["manual", "row action", "selected close", "restore"]) {
     await app.settle();
     const winner = app.get("refresh").listeners.click();
     await app.settle();
+    assert.equal(queries.length, 1);
+    queries[0].resolve({ ok: false, error: "Stale query denied" });
+    await app.settle();
     queries[1].resolve({ ok: true, tabs: [tab(2)] });
     await winner;
-    queries[0].resolve({ ok: false, error: "Stale query denied" });
     await old;
     assert.equal(app.get("bulkError").textContent, "");
     assert.deepEqual(Array.from(app.run("allTabs.map((tab) => tab.id)")), [2]);
@@ -174,9 +179,12 @@ for (const owner of ["targeted refresh", "row action", "selected close", "restor
     await app.settle();
     const winner = app.get("refresh").listeners.click();
     await app.settle();
+    assert.equal(queries.length, 1);
+    queries[0].resolve({ ok: true, tabs: [tab(2)] });
+    await app.settle();
+    assert.deepEqual(Array.from(app.run("allTabs.map((tab) => tab.id)")), [1]);
     queries[1].resolve({ ok: false, error: "Newest query denied" });
     await winner;
-    queries[0].resolve({ ok: true, tabs: [tab(2)] });
     await old;
     await app.settle();
     assert.equal(app.get("bulkError").textContent, "Could not refresh tabs: Newest query denied");
@@ -213,7 +221,7 @@ it("retains a selected zero-count domain across targeted reuse and its return", 
   assert.deepEqual(Array.from(app.run("getFilteredTabs().map((tab) => tab.id)")), [1]);
 });
 
-it("stages out-of-order ignore reads with their inventory until the latest bundle commits", async () => {
+it("stages queued ignore reads with their inventory until the latest bundle commits", async () => {
   let pending = false;
   const reads = [];
   const queries = [];
@@ -232,16 +240,19 @@ it("stages out-of-order ignore reads with their inventory until the latest bundl
   pending = true;
   const old = app.get("refresh").listeners.click();
   const winner = app.get("refresh").listeners.click();
-  reads[1].resolve({ ignoredDomains: ["new.test"], ignoredUrls: ["https://new.test/ignored"] });
+  assert.equal(reads.length, 1, "storage and inventory share one flight");
+  reads[0].resolve({ ignoredDomains: ["old.test"], ignoredUrls: ["https://old.test/ignored"] });
   await app.settle();
   assert.deepEqual(Array.from(app.run("ignoredDomains")), ["committed.test"]);
   assert.deepEqual(Array.from(app.run("allTabs.map((tab) => tab.id)")), [1]);
   assert.deepEqual(Array.from(app.run("getFilteredTabs().map((tab) => tab.id)")), [1]);
-  queries[0].resolve({ ok: true, tabs: [tab(2)] });
-  await winner;
-  reads[0].resolve({ ignoredDomains: ["old.test"], ignoredUrls: ["https://old.test/ignored"] });
+  queries[0].resolve({ ok: true, tabs: [tab(3)] });
   await app.settle();
-  queries[1].resolve({ ok: true, tabs: [tab(3)] });
+  assert.deepEqual(Array.from(app.run("ignoredDomains")), ["committed.test"]);
+  reads[1].resolve({ ignoredDomains: ["new.test"], ignoredUrls: ["https://new.test/ignored"] });
+  await app.settle();
+  queries[1].resolve({ ok: true, tabs: [tab(2)] });
+  await winner;
   await old;
   assert.deepEqual(Array.from(app.run("ignoredDomains")), ["new.test"]);
   assert.deepEqual(Array.from(app.run("ignoredUrls")), ["https://new.test/ignored"]);
@@ -336,12 +347,16 @@ for (const owner of ["row action", "selected close", "restore"]) {
     await app.settle();
     action.resolve({ ok: false, error: "Action denied" });
     await app.settle();
+    assert.equal(queries.length, 1);
+    queries[0].resolve({ ok: true, tabs: [tab(3)] });
+    await app.settle();
     winningAction.resolve({ ok: true });
+    await app.settle();
+    assert.equal(queries.length, 2);
+    queries[1].resolve({ ok: false, error: "Stale action query denied" });
     await app.settle();
     queries[2].resolve({ ok: true, tabs: [tab(2)] });
     await winning;
-    queries[1].resolve({ ok: false, error: "Stale action query denied" });
-    queries[0].resolve({ ok: true, tabs: [tab(3)] });
     await Promise.all([operation, manual]);
     assert.match(app.get("bulkError").textContent, /Action denied/);
     assert.doesNotMatch(app.get("bulkError").textContent, /Stale action query/);
