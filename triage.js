@@ -399,6 +399,7 @@ function syncSelection(tabs) {
 }
 
 function updateSelectionControls(tabs = getFilteredTabs()) {
+  const focused = document.activeElement;
   const eligibleCount = tabs.filter(isSelectableTab).length;
   const count = selectedTabIds.size;
   const selectAll = document.getElementById("selectAllTabs");
@@ -414,6 +415,8 @@ function updateSelectionControls(tabs = getFilteredTabs()) {
   document.getElementById("exportSelected").disabled = closingSelected ||
     !tabs.some((tab) => selectedTabIds.has(tab.id) && hasExportableUrl(tab));
   document.getElementById("exportAll").disabled = closingSelected || !enrichedTabs.some(hasExportableUrl);
+  // Disabling a focused toolbar control can blur it before render restores rows.
+  if (focused?.disabled) document.getElementById("search").focus({ preventScroll: true });
 }
 
 function hasExportableUrl(tab) {

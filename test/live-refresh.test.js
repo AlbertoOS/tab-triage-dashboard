@@ -508,6 +508,44 @@ it("a pending saved Off preference cannot briefly start default automatic work",
   assert.equal(app.messages.length, 1);
 });
 
+for (const control of ["closeSelected", "clearSelection", "exportSelected", "selectFiltered", "selectAllTabs", "exportAll"]) {
+  it(`returns focus to Search when live inventory disables ${control}`, async () => {
+    const tabs = events();
+    let inventory = [tab(1)];
+    const app = dashboard(() => ({ ok: true, tabs: structuredClone(inventory) }), {}, { tabs });
+    await app.settle();
+    app.get("selectFiltered").listeners.click();
+    const button = app.get(control);
+    assert.equal(button.disabled, false);
+    button.focus();
+    inventory = [];
+    tabs.onRemoved.emit(1, { windowId: 1 });
+    await tick(app);
+    assert.equal(button.disabled, true);
+    assert.equal(app.run("document.activeElement"), app.get("search"));
+    assert.equal(app.run("selectedTabIds.size"), 0);
+    assert.equal(app.run("allTabs.length"), 0);
+  });
+}
+
+for (const control of ["closeSelected", "search"]) {
+  it(`does not move focus from still-usable ${control} during live publication`, async () => {
+    const tabs = events();
+    let inventory = [tab(1)];
+    const app = dashboard(() => ({ ok: true, tabs: structuredClone(inventory) }), {}, { tabs });
+    await app.settle();
+    app.get("selectFiltered").listeners.click();
+    const focused = app.get(control);
+    focused.focus();
+    inventory = [tab(1), tab(2)];
+    tabs.onCreated.emit(tab(2));
+    await tick(app);
+    assert.equal(app.run("document.activeElement"), focused);
+    assert.equal(app.get("closeSelected").disabled, false);
+    assert.deepEqual(Array.from(app.run("selectedTabIds")), [1]);
+  });
+}
+
 it("Instant reconciles an external removal in a 1000-tab inventory without idle polling", async () => {
   let inventory = Array.from({ length: 1000 }, (_, i) => tab(i + 1));
   const tabs = events();
