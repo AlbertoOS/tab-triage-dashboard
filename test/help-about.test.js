@@ -125,7 +125,7 @@ it("keeps search intact through a held Escape dismissal until a separate Escape 
   assert.equal(app.get("search").value, "", "a separate press still clears search");
 });
 
-it("documents the current tab operations without advertising planned safeguards", () => {
+it("documents current row and all-window duplicate operations with distinct safeguards", () => {
   const help = html.match(/<dialog\b[^>]*id="helpDialog"[^>]*>([\s\S]*?)<\/dialog>/)?.[1] || "";
   const text = help.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ");
   for (const contract of [
@@ -136,9 +136,19 @@ it("documents the current tab operations without advertising planned safeguards"
     /selected domains match any checked domain/i,
     /No domains checked means all domains/,
     /Show ignored only.*only ignored tabs/,
-    /Dedup.*keeps the clicked tab.*other loaded copies.*normalized URL/,
-    /including filtered-out and ignored tabs across windows/,
-    /does not protect other pinned or active copies/,
+    /Keep this; close .*immediately.*normalized.URL.*without confirmation/,
+    /clicked tab is kept/,
+    /Close all copies.*clicked tab.*preview.*requires confirmation/,
+    /loaded inventory across all windows/,
+    /including filtered-out and ignored tabs/,
+    /Pinned and active copies can be closed/,
+    /Dedup all windows.*all accessible windows/,
+    /protects dashboard tabs, pinned tabs and each window.s active tab/,
+    /protected copies remain.*duplicates may remain/,
+    /first copy in browser window.tab order/,
+    /review.*pinned.active counts/i,
+    /each action only attempts its original candidates/i,
+    /tab can still change between the final check and close/,
     /Export selected links.*Export all links.*regardless of filters and ignores/,
     /one URL per line.*current sort order.*Duplicate URLs are preserved/,
     /Dashboard tabs and empty URLs are excluded/,
@@ -146,6 +156,30 @@ it("documents the current tab operations without advertising planned safeguards"
     /Private tabs.*may not be recoverable/,
     /display clusters.*not native browser tab groups/,
   ]) assert.match(text, contract);
+  assert.doesNotMatch(text, /\bDedup\s*:/, "obsolete row-action name must not remain");
+});
+
+it("matches the Help immediate-action warning to Keep's real no-confirmation command path", async () => {
+  const tabs = [
+    { id: 1, title: "Keeper", url: "https://copies.example/", windowId: 1, index: 0 },
+    { id: 2, title: "Other copy", url: "https://copies.example/", windowId: 2, index: 0, pinned: true, active: true },
+  ];
+  const app = dashboard((message) => message.type === "closeDuplicates"
+    ? { ok: true, closedCount: 1, skippedCount: 0, failedCount: 0, unverifiedCount: 0 }
+    : { ok: true, tabs });
+  await app.settle();
+  const keep = app.get("tab-body").children[0].querySelector(".btn-dedup");
+  assert.match(keep.title, /1 pinned and 1 active/);
+  await keep.listeners.click({ stopPropagation() {} });
+  const closures = app.messages.filter((message) => message.type === "closeDuplicates");
+  assert.equal(closures.length, 1, "Keep sends a closure without waiting for user confirmation");
+  assert.equal(closures[0].plan.mode, "keep");
+  assert.equal(closures[0].plan.groups[0].candidates[0].pinned, true);
+  assert.equal(closures[0].plan.groups[0].candidates[0].active, true);
+  assert.equal(app.get("duplicateConfirmDialog").open, false);
+  const help = html.match(/<dialog\b[^>]*id="helpDialog"[^>]*>([\s\S]*?)<\/dialog>/)[1];
+  assert.match(help, /immediately[\s\S]*without confirmation/);
+  assert.doesNotMatch(help, /keeps the clicked tab and previews closing/);
 });
 
 it("offers only public secure project/support links and warns before public sharing", () => {
@@ -178,6 +212,19 @@ it("bounds the Help surface for narrow/zoomed viewports and keeps keyboard focus
   assert.match(css, /\.help-heading\s*\{[^}]*position:\s*sticky[^}]*top:\s*0/);
   assert.match(css, /\.help-links\s*\{[^}]*flex-wrap:\s*wrap/);
   assert.match(css, /header\s*\{[^}]*flex-wrap:\s*wrap/);
+});
+
+it("gives both installed metadata lines the same inset as the Help sections", () => {
+  const css = fs.readFileSync(path.join(__dirname, "../triage.css"), "utf8");
+  const rules = Array.from(css.matchAll(/([^{}]+)\{([^{}]*)\}/g));
+  const contentRule = rules.find(([, selectors]) => selectors.split(",").some((selector) => selector.trim() === "#helpDialog section"));
+  assert.ok(contentRule, "Help sections must define their content inset");
+  const selectors = contentRule[1].split(",").map((selector) => selector.trim());
+  for (const id of ["helpVersion", "helpBrowser"]) {
+    assert.match(html, new RegExp(`<p\\b[^>]*id="${id}"`));
+    assert.ok(selectors.includes(`#${id}`), `${id} must share the Help content inset`);
+  }
+  assert.match(contentRule[2], /margin:\s*16px/);
 });
 
 it("wraps the sticky Help heading so narrow zoom does not squeeze the title beside Close", () => {

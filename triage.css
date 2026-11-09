@@ -938,7 +938,7 @@ button:disabled, button[aria-disabled="true"] { opacity: 0.45; cursor: default; 
   flex-shrink: 0;
 }
 
-#helpVersion, #helpDialog section {
+#helpVersion, #helpBrowser, #helpDialog section {
   margin: 16px;
 }
 
