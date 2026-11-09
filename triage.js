@@ -86,7 +86,7 @@ function enrichTabs() {
   const now = Date.now();
 
   // Count tabs per domain
-  const domainCounts = {};
+  const domainCounts = Object.create(null);
   for (const tab of allTabs) {
     const d = getDomain(tab.url || "");
     if (d) domainCounts[d] = (domainCounts[d] || 0) + 1;
@@ -551,6 +551,26 @@ function createTabRow(tab) {
   moreDropdown.appendChild(moreBtn);
   const moreMenu = document.createElement("div");
   moreMenu.className = "more-menu";
+  const filterDomainBtn = document.createElement("button");
+  filterDomainBtn.className = "btn-filter-domain";
+  filterDomainBtn.textContent = tab.domain ? `Filter ${tab.domain}` : "Filter domain";
+  filterDomainBtn.disabled = !tab.domain;
+  filterDomainBtn.title = tab.domain ? "Show only this domain using the domain filter" : "This tab has no domain to filter";
+  filterDomainBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (!tab.domain) return;
+    const options = Array.from(document.querySelectorAll('input[name="filterDomain"]'));
+    if (!options.some((checkbox) => checkbox.value === tab.domain)) return;
+    options.forEach((checkbox) => {
+      checkbox.checked = checkbox.value === tab.domain;
+    });
+    moreMenu.classList.remove("open");
+    document.getElementById("domainDropdown").classList.remove("open");
+    updateDomainButtonLabel();
+    render();
+    document.getElementById("domainDropdownBtn").focus();
+  });
+  moreMenu.appendChild(filterDomainBtn);
   const discardBtn = document.createElement("button");
   discardBtn.className = "btn-discard";
   discardBtn.textContent = "Discard tab";
@@ -684,7 +704,7 @@ function updateSortHeaders() {
 
 function populateDomainFilter() {
   const selectedDomains = new Set(getSelectedDomains());
-  const domainCounts = {};
+  const domainCounts = Object.create(null);
   for (const tab of enrichedTabs) {
     if (tab.domain) {
       domainCounts[tab.domain] = (domainCounts[tab.domain] || 0) + 1;
