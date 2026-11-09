@@ -94,8 +94,8 @@ const cases = {
   resetIgnores: { initial: { ignoredUrls: ["https://a.test/page"], ignoredDomains: ["keep.test"] },
     urls: [], domains: [], visible: [1, 2, 3],
     edit: (app) => {
-      app.run("globalThis.confirm = () => true");
       app.get("resetIgnored").listeners.click();
+      app.get("duplicateConfirmAccept").listeners.click();
     } },
 };
 
@@ -155,6 +155,8 @@ for (const [action, scenario] of Object.entries(cases)) {
       if (window === "save pending before load") {
         holdWrites();
         scenario.edit(app);
+        // A confirmed document dialog resumes its action asynchronously.
+        await app.settle();
         assert.equal(writes.length, 1);
         start();
         refresh = app.get("refresh").listeners.click();
@@ -232,8 +234,9 @@ it("empty ignore inputs and a cancelled reset do not block a fresh stored prefer
   const refresh = app.get("refresh").listeners.click();
   await app.run('ignoreUrl("")');
   await app.run('ignoreDomain("")');
-  app.run("globalThis.confirm = () => false");
-  app.get("resetIgnored").listeners.click();
+  const reset = app.get("resetIgnored").listeners.click();
+  app.get("duplicateConfirmCancel").listeners.click();
+  await reset;
   assert.equal(writes.length, 0);
   reads[0].resolve({ ignoredDomains: ["a.test"] });
   await app.settle();
